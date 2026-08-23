@@ -24,7 +24,7 @@ export function extractCustomKeyterms(bgText?: string): string[] {
     .map((w) => w.trim())
     .filter((w) => w.length > 2 && /^[A-Za-z0-9.-]+$/.test(w));
   
-  return Array.from(new Set(words)).slice(0, 10);
+  return Array.from(new Set(words)).slice(0, 20);
 }
 
 /**
@@ -32,6 +32,6 @@ export function extractCustomKeyterms(bgText?: string): string[] {
  */
 export function getCombinedKeyterms(customBg?: string): string[] {
   const custom = extractCustomKeyterms(customBg);
-  const combined = Array.from(new Set([...DEFAULT_TECHNICAL_KEYTERMS, ...custom]));
+  const combined = Array.from(new Set([...custom, ...DEFAULT_TECHNICAL_KEYTERMS]));
   return combined.slice(0, 30);
 }

@@ -1,95 +1,153 @@
-/**
- * Production Session Manager for AI Interview Assistant
- * Handles:
- * 1. Session-based full transcript recording (Connect -> Disconnect) saved to localStorage
- * 2. Sliding window context extraction (limits raw prompt to recent ~2000 chars)
- * 3. Persistent rolling context summary (preserves context even when user clears UI)
- */
+import type { MeetingMemory, TranscriptTurn } from "@/lib/conversationTypes";
+import { EMPTY_MEETING_MEMORY } from "@/lib/conversationTypes";
 
 export interface SavedSession {
   id: string;
   startedAt: string;
   endedAt?: string;
-  transcripts: Array<{ timestamp: string; text: string; speaker: string }>;
-  summary: string;
+  transcripts: TranscriptTurn[];
+  memory: MeetingMemory;
 }
 
-const STORAGE_KEY_SESSIONS = "interview_sessions";
-const STORAGE_KEY_ACTIVE_ID = "interview_active_session_id";
-const MAX_RECENT_CHARS = 2000;
+const STORAGE_KEY_SESSIONS = "interview_sessions_v3";
+const STORAGE_KEY_ACTIVE_ID = "interview_active_session_id_v3";
+const MEMORY_REFRESH_EVERY_TURNS = 8;
+const MAX_LOCAL_SESSIONS = 6;
+const MAX_TURNS_PER_LOCAL_SESSION = 600;
+const LOCAL_PERSIST_DEBOUNCE_MS = 750;
 
 class SessionManager {
   private activeSession: SavedSession | null = null;
+  private memoryRefreshInFlight = false;
+  private turnsSinceMemoryRefresh = 0;
+  private memoryRetryAfter = 0;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    if (typeof window !== "undefined") {
-      this.restoreActiveSession();
-    }
+    if (typeof window !== "undefined") this.restoreActiveSession();
   }
 
-  /**
-   * Start a new session when user clicks "Connect"
-   */
   startSession(): SavedSession {
-    const id = `session_${Date.now()}`;
-    const newSession: SavedSession = {
-      id,
+    const session: SavedSession = {
+      id: `session_${Date.now()}`,
       startedAt: new Date().toISOString(),
       transcripts: [],
-      summary: "",
+      memory: { ...EMPTY_MEETING_MEMORY },
     };
-
-    this.activeSession = newSession;
+    this.activeSession = session;
+    this.turnsSinceMemoryRefresh = 0;
+    this.memoryRetryAfter = 0;
     this.saveToStorage();
     if (typeof window !== "undefined") {
-      localStorage.setItem(STORAGE_KEY_ACTIVE_ID, id);
+      try { localStorage.setItem(STORAGE_KEY_ACTIVE_ID, session.id); } catch { /* non-fatal */ }
     }
-
-    return newSession;
+    return session;
   }
 
-  /**
-   * Add a transcript item to the active session.
-   * Stored independently of the UI display state.
-   */
-  addTranscript(text: string, speaker: string = "external") {
-    if (!this.activeSession) {
-      this.startSession();
+  addTranscript(turn: TranscriptTurn) {
+    if (!this.activeSession) this.startSession();
+    if (!this.activeSession || !turn.text.trim()) return;
+    const last = this.activeSession.transcripts.at(-1);
+    if (last?.id === turn.id) return;
+
+    this.activeSession.transcripts.push({ ...turn, text: turn.text.trim(), isInterim: false });
+    if (this.activeSession.transcripts.length > MAX_TURNS_PER_LOCAL_SESSION) {
+      this.activeSession.transcripts.splice(0, this.activeSession.transcripts.length - MAX_TURNS_PER_LOCAL_SESSION);
     }
-
-    if (!this.activeSession) return;
-
-    // Check for exact duplicate of the last entry to prevent duplication
-    const last = this.activeSession.transcripts[this.activeSession.transcripts.length - 1];
-    if (last && last.text.trim() === text.trim()) {
-      return;
-    }
-
-    this.activeSession.transcripts.push({
-      timestamp: new Date().toLocaleTimeString(),
-      text: text.trim(),
-      speaker,
-    });
-
-    this.saveToStorage();
+    this.turnsSinceMemoryRefresh += 1;
+    this.scheduleSaveToStorage();
+    void this.refreshMemoryIfDue();
   }
 
-  /**
-   * End the current session on "Disconnect" and write file to ./sessions/
-   */
   async endSession() {
     if (!this.activeSession) return;
-
+    await this.refreshMemory(true).catch(() => undefined);
     this.activeSession.endedAt = new Date().toISOString();
+    this.cancelScheduledPersist();
     this.saveToStorage();
-
-    // Save session as JSON file in ./sessions/ directory
     await this.saveToServerDisk(this.activeSession);
-
     this.activeSession = null;
-
+    this.turnsSinceMemoryRefresh = 0;
+    this.memoryRetryAfter = 0;
     if (typeof window !== "undefined") {
-      localStorage.removeItem(STORAGE_KEY_ACTIVE_ID);
+      try { localStorage.removeItem(STORAGE_KEY_ACTIVE_ID); } catch { /* non-fatal */ }
+    }
+  }
+
+  getMemory(): MeetingMemory {
+    return this.activeSession?.memory || { ...EMPTY_MEETING_MEMORY };
+  }
+
+  getSummary(): string {
+    return this.getMemory().summary;
+  }
+
+  getRecentTurns(n = 12): TranscriptTurn[] {
+    return this.activeSession?.transcripts.slice(-Math.max(1, Math.min(n, 50))) || [];
+  }
+
+  getSessionId(): string | undefined {
+    return this.activeSession?.id;
+  }
+
+  getFullTranscriptString(): string {
+    return (this.activeSession?.transcripts || [])
+      .map((turn) => `${turn.speaker === "me" ? "ME" : "INTERVIEWER"}: ${turn.text}`)
+      .join("\n");
+  }
+
+  isSessionActive(): boolean {
+    return Boolean(this.activeSession);
+  }
+
+  getAllSessions(): SavedSession[] {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_SESSIONS);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async refreshMemoryIfDue() {
+    if (Date.now() < this.memoryRetryAfter) return;
+    if (this.turnsSinceMemoryRefresh < MEMORY_REFRESH_EVERY_TURNS) return;
+    await this.refreshMemory(false);
+  }
+
+  private async refreshMemory(force: boolean) {
+    if (!this.activeSession || this.memoryRefreshInFlight) return;
+    if (!force && this.turnsSinceMemoryRefresh < MEMORY_REFRESH_EVERY_TURNS) return;
+    if (this.activeSession.transcripts.length < 2) return;
+
+    this.memoryRefreshInFlight = true;
+    const sessionId = this.activeSession.id;
+    try {
+      const response = await fetch("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          previousMemory: this.activeSession.memory,
+          turns: this.activeSession.transcripts.slice(-24),
+        }),
+      });
+      if (!response.ok) {
+        this.memoryRetryAfter = Date.now() + 30_000;
+        return;
+      }
+      const payload = await response.json();
+      if (this.activeSession?.id !== sessionId || !payload?.memory) return;
+      this.activeSession.memory = payload.memory;
+      this.turnsSinceMemoryRefresh = 0;
+      this.memoryRetryAfter = 0;
+      this.scheduleSaveToStorage();
+    } catch (error) {
+      this.memoryRetryAfter = Date.now() + 30_000;
+      console.warn("Meeting-memory refresh failed; continuing with recent turns", error);
+    } finally {
+      this.memoryRefreshInFlight = false;
     }
   }
 
@@ -100,106 +158,39 @@ class SessionManager {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(session),
       });
-    } catch (err) {
-      console.warn("Failed to save session file to disk:", err);
+    } catch (error) {
+      console.warn("Failed to persist session to server disk", error);
     }
   }
 
-  /**
-   * Get sliding window transcript (last ~2000 chars) for prompt construction.
-   * Prevents LLM hallucination and high latency caused by bloated prompts.
-   */
-  getSlidingWindowTranscript(rawInput: string): string {
-    if (!rawInput) return "";
-
-    if (rawInput.length <= MAX_RECENT_CHARS) {
-      return rawInput;
-    }
-
-    // Slice last MAX_RECENT_CHARS characters, aligning to the start of a sentence or line
-    const sliced = rawInput.slice(-MAX_RECENT_CHARS);
-    const firstNewline = sliced.indexOf("\n");
-
-    if (firstNewline !== -1 && firstNewline < 200) {
-      return sliced.slice(firstNewline + 1);
-    }
-
-    return sliced;
+  private scheduleSaveToStorage() {
+    if (typeof window === "undefined" || !this.activeSession || this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      this.saveToStorage();
+    }, LOCAL_PERSIST_DEBOUNCE_MS);
   }
 
-  /**
-   * Update the rolling summary (e.g., from AI response meta)
-   */
-  updateSummary(summaryText: string) {
-    if (!this.activeSession || !summaryText.trim()) return;
-
-    // Combine or replace rolling summary
-    this.activeSession.summary = summaryText.trim();
-    this.saveToStorage();
-  }
-
-  /**
-   * Get the current rolling summary
-   */
-  getSummary(): string {
-    return this.activeSession?.summary || "";
-  }
-
-  /**
-   * Get the last N transcript entries as structured objects for LLM context.
-   */
-  getRecentTurns(n: number = 15): Array<{ timestamp: string; text: string; speaker: string }> {
-    if (!this.activeSession) return [];
-    return this.activeSession.transcripts.slice(-n);
-  }
-
-  /**
-   * Get full session transcript as formatted string
-   */
-  getFullTranscriptString(): string {
-    if (!this.activeSession) return "";
-
-    return this.activeSession.transcripts
-      .map((item) => `[${item.timestamp}] ${item.speaker.toUpperCase()}: ${item.text}`)
-      .join("\n");
-  }
-
-  /**
-   * Check if a session is currently active
-   */
-  isSessionActive(): boolean {
-    return this.activeSession !== null;
-  }
-
-  /**
-   * Get all completed and saved sessions
-   */
-  getAllSessions(): SavedSession[] {
-    if (typeof window === "undefined") return [];
-    try {
-      const data = localStorage.getItem(STORAGE_KEY_SESSIONS);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
-    }
+  private cancelScheduledPersist() {
+    if (!this.persistTimer) return;
+    clearTimeout(this.persistTimer);
+    this.persistTimer = null;
   }
 
   private saveToStorage() {
     if (typeof window === "undefined" || !this.activeSession) return;
-
     try {
       const sessions = this.getAllSessions();
-      const existingIdx = sessions.findIndex((s) => s.id === this.activeSession?.id);
-
-      if (existingIdx >= 0) {
-        sessions[existingIdx] = this.activeSession;
-      } else {
-        sessions.push(this.activeSession);
-      }
-
-      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
-    } catch (e) {
-      console.warn("Failed to save session to localStorage:", e);
+      const index = sessions.findIndex((session) => session.id === this.activeSession?.id);
+      if (index >= 0) sessions[index] = this.activeSession;
+      else sessions.push(this.activeSession);
+      const trimmed = sessions
+        .map((session) => ({ ...session, transcripts: (session.transcripts || []).slice(-MAX_TURNS_PER_LOCAL_SESSION) }))
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+        .slice(0, MAX_LOCAL_SESSIONS);
+      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(trimmed));
+    } catch (error) {
+      console.warn("Failed to persist session locally", error);
     }
   }
 
@@ -207,14 +198,16 @@ class SessionManager {
     try {
       const activeId = localStorage.getItem(STORAGE_KEY_ACTIVE_ID);
       if (!activeId) return;
-
-      const sessions = this.getAllSessions();
-      const found = sessions.find((s) => s.id === activeId && !s.endedAt);
+      const found = this.getAllSessions().find((session) => session.id === activeId && !session.endedAt);
       if (found) {
+        found.memory ||= { ...EMPTY_MEETING_MEMORY };
+        found.transcripts = (found.transcripts || []).slice(-MAX_TURNS_PER_LOCAL_SESSION);
         this.activeSession = found;
+        this.turnsSinceMemoryRefresh = 0;
+        this.memoryRetryAfter = 0;
       }
     } catch {
-      // Ignore storage errors
+      // Corrupt local state should never prevent the app from starting.
     }
   }
 }

@@ -1,4 +1,3 @@
-// Simple working web search agent
 export interface WebSearchResult {
   title: string;
   link: string;
@@ -14,64 +13,48 @@ export interface SearchResponse {
 }
 
 class SimpleWebSearchAgent {
-  private tavilyApiKey: string;
+  async searchWeb(query: string, numResults = 3, signal?: AbortSignal): Promise<SearchResponse> {
+    const apiKey = process.env.TAVILY_API_KEY?.trim();
+    if (!apiKey) return { results: [], searchQuery: query, totalResults: 0 };
 
-  constructor() {
-    this.tavilyApiKey = process.env.TAVILY_API_KEY || '';
-  }
-
-  async searchWeb(query: string, numResults: number = 5): Promise<SearchResponse> {
     try {
-      if (!this.tavilyApiKey) {
-        return {
-          results: [{
-            title: `Search: ${query}`,
-            link: 'https://example.com',
-            snippet: `Fallback result for: ${query}. Please configure TAVILY_API_KEY.`,
-            source: 'Web: Fallback',
-            score: 0.5
-          }],
-          searchQuery: query,
-          totalResults: 1
-        };
-      }
-
-      const { tavily } = await import('@tavily/core');
-      const tavilyClient = tavily({ apiKey: this.tavilyApiKey });
-      
-      const response = await tavilyClient.search(query, {
-        search_depth: "basic",
-        include_answer: false,
-        include_images: false,
-        include_raw_content: false,
-        max_results: numResults
+      // Direct HTTP keeps timeout/cancellation under our control and avoids fake fallback content.
+      const response = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query,
+          search_depth: "basic",
+          include_answer: false,
+          include_images: false,
+          include_raw_content: false,
+          max_results: numResults,
+        }),
+        signal,
       });
-
-      if (!response || !response.results) {
-        throw new Error('Invalid response from Tavily API');
+      if (!response.ok) throw new Error(`Tavily returned HTTP ${response.status}`);
+      const payload = await response.json();
+      const results: WebSearchResult[] = Array.isArray(payload?.results)
+        ? payload.results.slice(0, numResults).map((result: any, index: number) => {
+            let host = "web";
+            try { host = new URL(result.url).hostname; } catch {}
+            return {
+              title: result.title || `Result ${index + 1}`,
+              link: result.url || "",
+              snippet: result.content || "",
+              source: host,
+              score: typeof result.score === "number" ? result.score : 0,
+            };
+          })
+        : [];
+      const usableResults = results.filter((result) => /^https?:\/\//i.test(result.link));
+      return { results: usableResults, searchQuery: query, totalResults: usableResults.length };
+    } catch (error: any) {
+      if (error?.name !== "AbortError" && error?.name !== "TimeoutError") {
+        console.warn("[web] search failed:", error?.message || error);
       }
-
-      const results: WebSearchResult[] = response.results.map((result: any, index: number) => ({
-        title: result.title || `Result ${index + 1}`,
-        link: result.url || '',
-        snippet: result.content || result.snippet || '',
-        source: `Web: ${new URL(result.url).hostname}`,
-        score: result.score || 0.8
-      }));
-
-      return {
-        results,
-        searchQuery: query,
-        totalResults: results.length
-      };
-
-    } catch (error) {
-      console.error('Web search error:', (error as Error).message);
-      return {
-        results: [],
-        searchQuery: query,
-        totalResults: 0
-      };
+      return { results: [], searchQuery: query, totalResults: 0 };
     }
   }
 }

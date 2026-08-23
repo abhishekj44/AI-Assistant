@@ -1,111 +1,122 @@
-#!/usr/bin/env node
+/* eslint-disable no-console */
+require("dotenv").config({ path: ".env.local" });
+require("dotenv").config();
 
-/**
- * Script to verify the setup configuration for the AI Interview Assistant
- * Checks all required environment variables and API connections
- */
+const fs = require("node:fs");
+const path = require("node:path");
 
-require('dotenv').config({ path: '.env.local' });
-require('dotenv').config();
+function ok(message) { console.log(`OK   ${message}`); }
+function warn(message) { console.warn(`WARN ${message}`); }
+function fail(message) { console.error(`FAIL ${message}`); process.exitCode = 1; }
 
-async function verifySetup() {
-  console.log('🔍 Verifying AI Interview Assistant Setup...\n');
-  
-  let allGood = true;
-  
-  // Check required environment variables
-  const requiredVars = [
-    'DEEPGRAM_API_KEY',
-    'GEMINI_API_KEY',
-    'PINECONE_API_KEY',
-    'TAVILY_API_KEY'
-  ];
-  
-  console.log('📋 Environment Variables:');
-  requiredVars.forEach(varName => {
-    const value = process.env[varName];
-    if (value && value !== `your-${varName.toLowerCase().replace('_', '-')}-here`) {
-      console.log(`✅ ${varName}: Configured`);
-    } else {
-      console.log(`❌ ${varName}: Missing or not configured`);
-      allGood = false;
+function provider() {
+  const value = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
+  return ["gemini", "cerebras", "groq"].includes(value) ? value : "gemini";
+}
+
+async function verifyPrimaryModel() {
+  const selected = provider();
+  if (selected === "gemini") {
+    if (!process.env.GEMINI_API_KEY) return fail("GEMINI_API_KEY is required for LLM_PROVIDER=gemini");
+    try {
+      const { GoogleGenAI, ThinkingLevel } = require("@google/genai");
+      const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { apiVersion: process.env.GEMINI_API_VERSION || "v1" } });
+      const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+      const config = {
+        maxOutputTokens: 16,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+      };
+      if ((process.env.GEMINI_SERVICE_TIER || "standard").toLowerCase() === "priority") {
+        config.serviceTier = "priority";
+      }
+      const response = await client.models.generateContent({
+        model,
+        contents: "Reply only with OK",
+        config,
+      });
+      if (!response.text?.toUpperCase().includes("OK")) throw new Error("unexpected model response");
+      const actualTier = response.usageMetadata?.serviceTier || process.env.GEMINI_SERVICE_TIER || "standard";
+      ok(`Gemini model reachable: ${model} (tier: ${String(actualTier).toLowerCase()})`);
+    } catch (error) {
+      fail(`Gemini validation failed: ${error.message}`);
     }
-  });
-  
-  // Check optional environment variables
-  console.log('\n📋 Optional Configuration:');
-  const optionalVars = ['PINECONE_ENVIRONMENT', 'PINECONE_INDEX_NAME', 'MODEL'];
-  optionalVars.forEach(varName => {
-    const value = process.env[varName];
-    if (value) {
-      console.log(`✅ ${varName}: ${value}`);
-    } else {
-      console.log(`⚠️ ${varName}: Using default`);
-    }
-  });
-  
-  if (!allGood) {
-    console.log('\n❌ Setup incomplete. Please configure missing environment variables in .env.local');
-    console.log('📖 See README.md for instructions on getting API keys.');
     return;
   }
-  
-  console.log('\n🧪 Testing API Connections...');
-  
-  // Test Pinecone connection
+
+  const isCerebras = selected === "cerebras";
+  const keyName = isCerebras ? "CEREBRAS_API_KEY" : "GROQ_API_KEY";
+  const apiKey = process.env[keyName];
+  if (!apiKey) return fail(`${keyName} is required for LLM_PROVIDER=${selected}`);
+  const endpoint = isCerebras
+    ? (process.env.CEREBRAS_API_URL || "https://api.cerebras.ai/v1/chat/completions")
+    : (process.env.GROQ_API_URL || "https://api.groq.com/openai/v1/chat/completions");
+  const model = isCerebras
+    ? (process.env.CEREBRAS_MODEL || "gpt-oss-120b")
+    : (process.env.GROQ_MODEL || "openai/gpt-oss-120b");
   try {
-    const { Pinecone } = require('@pinecone-database/pinecone');
-    const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-    const indexes = await pinecone.listIndexes();
-    const indexName = process.env.PINECONE_INDEX_NAME || 'interview-docs';
-    const hasIndex = indexes.indexes?.some(index => index.name === indexName);
-    
-    if (hasIndex) {
-      console.log(`✅ Pinecone: Index "${indexName}" found`);
-    } else {
-      console.log(`⚠️ Pinecone: Index "${indexName}" not found`);
-      console.log('   Run: yarn setup-pinecone');
-      allGood = false;
-    }
-  } catch (error) {
-    console.log(`❌ Pinecone: Connection failed - ${error.message}`);
-    allGood = false;
-  }
-  
-  // Test Gemini connection
-  try {
-    const { GoogleGenAI } = require('@google/genai');
-    const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const result = await gemini.models.embedContent({
-      model: 'gemini-embedding-001',
-      contents: 'Setup verification',
-      config: { outputDimensionality: 768 },
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: [{ role: "user", content: "Reply only with OK" }], max_completion_tokens: 16, reasoning_effort: "low" }),
+      signal: AbortSignal.timeout(8000),
     });
-    if (result.embeddings?.[0]?.values?.length !== 768) throw new Error('Unexpected embedding dimensions');
-    console.log('✅ Gemini: API key and embedding model verified');
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    ok(`${selected} model reachable: ${model}`);
   } catch (error) {
-    console.log(`❌ Gemini: Configuration failed - ${error.message}`);
-    allGood = false;
-  }
-  
-  console.log('\n' + '='.repeat(50));
-  
-  if (allGood) {
-    console.log('🎉 Setup verification complete! Your application is ready to use.');
-    console.log('\n🚀 Next steps:');
-    console.log('   1. Start the development server: yarn dev');
-    console.log('   2. Open http://localhost:3000 in your browser');
-    console.log('   3. Upload a PDF and test the RAG functionality');
-  } else {
-    console.log('❌ Setup verification failed. Please fix the issues above.');
-    console.log('\n📖 For help, see:');
-    console.log('   - README.md for setup instructions');
-    console.log('   - TROUBLESHOOTING.md for common issues');
+    fail(`${selected} validation failed: ${error.message}`);
   }
 }
 
-// Run the verification
-verifySetup().catch(error => {
-  console.error('❌ Verification script failed:', error.message);
-  process.exit(1);
+
+async function verifyDeepgram() {
+  const apiKey = process.env.DEEPGRAM_API_KEY;
+  if (!apiKey) return fail("DEEPGRAM_API_KEY is required for live transcription");
+  try {
+    const response = await fetch("https://api.deepgram.com/v1/auth/grant", {
+      method: "POST",
+      headers: { Authorization: `Token ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ttl_seconds: 30 }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.access_token) {
+      const detail = payload?.err_msg || `HTTP ${response.status}`;
+      if (/insufficient permissions/i.test(detail)) {
+        throw new Error(`${detail} Create a Deepgram API key with Member-or-higher permission; /v1/auth/grant requires it.`);
+      }
+      throw new Error(detail);
+    }
+    ok("Deepgram short-lived token grant reachable");
+  } catch (error) {
+    fail(`Deepgram token validation failed: ${error.message}`);
+  }
+}
+
+async function main() {
+  console.log("Meeting Copilot setup verification\n");
+
+  if (Number(process.versions.node.split(".")[0]) >= 20) ok(`Node ${process.versions.node}`);
+  else fail(`Node ${process.versions.node}; Node 20+ is required`);
+
+  const worklet = path.join(process.cwd(), "public", "worklets", "pcm-processor.js");
+  fs.existsSync(worklet) ? ok("PCM AudioWorklet present") : fail("public/worklets/pcm-processor.js is missing");
+
+  await verifyDeepgram();
+
+  if (!process.env.GEMINI_API_KEY && provider() !== "gemini") {
+    warn("GEMINI_API_KEY is not set: live answers can work, but Knowledge Pack extraction and rolling meeting memory are disabled");
+  }
+
+  if (process.env.TAVILY_API_KEY) ok("TAVILY_API_KEY configured for freshness-sensitive questions");
+  else warn("TAVILY_API_KEY not set; fresh web lookup will be skipped");
+
+  await verifyPrimaryModel();
+
+  if (!process.exitCode) {
+    console.log("\nSetup checks passed. Start with: npm run dev");
+  }
+}
+
+main().catch((error) => {
+  fail(error?.stack || error?.message || String(error));
 });

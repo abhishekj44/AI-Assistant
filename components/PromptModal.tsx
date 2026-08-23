@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { DEFAULT_PROMPT_RULES, buildPrompt, TranscriptTurn } from "@/lib/utils";
+import { DEFAULT_PROMPT_RULES, buildPrompt } from "@/lib/utils";
+import type { SpeakerRole } from "@/lib/conversationTypes";
 import {
   Sliders,
   Sparkles,
@@ -27,7 +28,7 @@ interface PromptModalProps {
   customRules: string;
   onSaveCustomRules: (newRules: string) => void;
   currentSummary?: string;
-  recentTurns?: TranscriptTurn[];
+  recentTurns?: Array<{ speaker: SpeakerRole; text: string }>;
   focusQuestion?: string;
 }
 
@@ -69,10 +70,10 @@ export function PromptModal({
   };
 
   // Generate real-time preview of the actual prompt
-  const sampleTurns: TranscriptTurn[] = recentTurns.length > 0
+  const sampleTurns: Array<{ speaker: SpeakerRole; text: string }> = recentTurns.length > 0
     ? recentTurns
     : [
-        { speaker: "EXTERNAL", text: "How would you handle scale in a distributed RAG pipeline?" },
+        { speaker: "interviewer", text: "How would you handle scale in a distributed AI pipeline?" },
       ];
 
   const livePromptPreview = buildPrompt(
@@ -174,7 +175,7 @@ export function PromptModal({
                 </Button>
               </div>
               <p className="text-[11px] text-slate-400">
-                These bullet points guide Gemini&apos;s answer format, tone, verbosity, and conciseness during live interview sessions.
+                These rules guide the configured model&apos;s answer format, tone, verbosity, and conciseness during live sessions.
               </p>
               <Textarea
                 rows={9}
@@ -200,7 +201,7 @@ export function PromptModal({
                 rows={9}
                 value={localBg}
                 onChange={(e) => setLocalBg(e.target.value)}
-                placeholder="e.g. Senior Software Engineer with 6+ years in Distributed Systems, Node.js, Next.js, Pinecone RAG, and Azure..."
+                placeholder="e.g. Senior Software Engineer with 6+ years in Distributed Systems, Node.js, Next.js, agentic AI, and Azure..."
                 className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-slate-200 font-mono text-xs leading-relaxed focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
               />
             </div>
@@ -212,12 +213,12 @@ export function PromptModal({
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
                   <Code2 className="w-3.5 h-3.5" />
-                  Exact Assembled Prompt (What LLM Receives)
+                  Representative Prompt Layout
                 </Label>
                 <span className="text-[10px] text-slate-500">Live Preview</span>
               </div>
               <p className="text-[11px] text-slate-400">
-                This shows the formatted prompt that will be sent to the Gemini API, incorporating your custom rules, persona background, prior summary, and recent turns.
+                This shows a representative prompt layout incorporating your custom rules, persona notes, meeting memory, and recent turns.
               </p>
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 font-mono text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto">
                 {livePromptPreview}

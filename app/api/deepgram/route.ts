@@ -1,39 +1,77 @@
-import { createClient } from "@deepgram/sdk";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export async function GET(request: Request) {
-  const masterKey = process.env.DEEPGRAM_API_KEY ?? "";
-  if (!masterKey) {
-    return NextResponse.json({ error: "DEEPGRAM_API_KEY environment variable is not configured" }, { status: 500 });
+const TOKEN_TTL_SECONDS = 60;
+const DEEPGRAM_AUTH_URL = "https://api.deepgram.com/v1/auth/grant";
+
+function noStoreJson(body: Record<string, unknown>, status = 200) {
+  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+export async function GET() {
+  const apiKey = process.env.DEEPGRAM_API_KEY?.trim();
+  if (!apiKey) {
+    return noStoreJson(
+      {
+        error: "DEEPGRAM_API_KEY is not configured",
+        code: "DEEPGRAM_NOT_CONFIGURED",
+        help: "Set DEEPGRAM_API_KEY on the server before starting transcription.",
+      },
+      500,
+    );
   }
 
-  const deepgram = createClient(masterKey);
-
   try {
-    const { result: projectsResult, error: projectsError } = await deepgram.manage.getProjects();
-
-    if (projectsError || !projectsResult?.projects?.[0]) {
-      // Fallback: If master key doesn't have manage permissions, return the configured key
-      return NextResponse.json({ key: masterKey });
-    }
-
-    const project = projectsResult.projects[0];
-    const { result: newKeyResult, error: newKeyError } = await deepgram.manage.createProjectKey(project.project_id, {
-      comment: "Ephemeral session key",
-      scopes: ["usage:write"],
-      tags: ["interview-copilot"],
-      time_to_live_in_seconds: 30,
+    const response = await fetch(DEEPGRAM_AUTH_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Token ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ttl_seconds: TOKEN_TTL_SECONDS }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(5_000),
     });
 
-    if (newKeyError || !newKeyResult?.key) {
-      return NextResponse.json({ key: masterKey });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || typeof payload?.access_token !== "string" || !payload.access_token) {
+      const detail = typeof payload?.err_msg === "string" ? payload.err_msg : `Deepgram auth returned HTTP ${response.status}`;
+      const insufficientPermissions = /insufficient permissions/i.test(detail);
+
+      console.error("[deepgram] temporary token grant rejected", {
+        status: response.status,
+        errCode: payload?.err_code,
+        detail,
+      });
+
+      return noStoreJson(
+        {
+          error: detail,
+          code: insufficientPermissions ? "DEEPGRAM_INSUFFICIENT_PERMISSIONS" : "DEEPGRAM_TOKEN_GRANT_FAILED",
+          help: insufficientPermissions
+            ? "Create a Deepgram API key with Member-or-higher permission. The /v1/auth/grant endpoint requires that role to mint short-lived browser tokens."
+            : "Verify the Deepgram API key, project access, and account/model permissions.",
+        },
+        response.status === 401 || response.status === 403 ? 502 : 503,
+      );
     }
 
-    return NextResponse.json({ key: newKeyResult.key });
-  } catch (err) {
-    // Graceful fallback to master key
-    return NextResponse.json({ key: masterKey });
+    return noStoreJson({
+      accessToken: payload.access_token,
+      expiresIn: Number(payload.expires_in) || TOKEN_TTL_SECONDS,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Deepgram token grant failed";
+    console.error("[deepgram] temporary token grant failed", error);
+    return noStoreJson(
+      {
+        error: message,
+        code: "DEEPGRAM_TOKEN_GRANT_UNAVAILABLE",
+        help: "Check network access to api.deepgram.com and retry.",
+      },
+      503,
+    );
   }
 }

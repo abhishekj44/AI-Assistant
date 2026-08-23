@@ -1,0 +1,1076 @@
+{
+  "version": 2,
+  "updatedAt": "2026-08-23T19:55:00.000Z",
+  "profile": {
+    "headline": "Senior AI Engineer",
+    "summary": "Senior AI Engineer and technical advisor with close to 10 years of experience across software engineering, GenAI/Agentic AI solution architecture, computer vision, and robotics in enterprise and product organizations.",
+    "strengths": [
+      "Translating complex AI concepts for engineering and business stakeholders",
+      "Designing multi-agent systems and RAG architectures",
+      "End-to-end computer vision and multimodal AI solutions",
+      "Technical discovery and developer enablement"
+    ]
+  },
+  "experience": [
+    {
+      "company": "NTT DATA",
+      "role": "Lead AI Engineer",
+      "period": "",
+      "responsibilities": [
+        "Architected an Enterprise AI Contract Intelligence Platform combining RAG, multi-agent orchestration, and model-serving APIs.",
+        "Designed a Captain-Worker multi-agent architecture using LangGraph for concurrent legal-risk, compliance, scoring, and recommendation tasks.",
+        "Designed a multimodal AI processing pipeline for railway signal-plan drawings using PDF validation, image preprocessing, custom YOLOv8, domain knowledge retrieval, and LLM report generation.",
+        "Conducted technical discovery sessions and presented AI solution architectures, model choices, and trade-offs to stakeholders.",
+        "Guided development teams on RAG, multimodal AI, API integration, and prompt design."
+      ],
+      "achievements": [
+        "Created reusable RAG frameworks and platform capabilities including Pydantic output contracts, model-provider abstraction, and fallback execution paths.",
+        "Developed extensible multimodal architectures applicable to complex engineering document interpretation."
+      ],
+      "technologies": [
+        "Python",
+        "TensorFlow",
+        "PyTorch",
+        "LLM",
+        "RAG",
+        "LangGraph",
+        "Agentic AI",
+        "Ollama",
+        "DeepEval",
+        "RAGAS",
+        "PostgreSQL",
+        "AWS",
+        "Azure",
+        "Docker",
+        "Kubernetes",
+        "Linux",
+        "Git",
+        "YOLOv8"
+      ]
+    },
+    {
+      "company": "CAPGEMINI ENGINEERING (Centre of Excellence)",
+      "role": "Professional II (Senior AI Engineer)",
+      "period": "",
+      "responsibilities": [
+        "Designed a LangChain-based RAG pipeline with ChromaDB and OpenAI.",
+        "Built a multi-domain conversational AI system with agent routing across specialized RAG models.",
+        "Developed an autonomous inventory vehicle using ROS with LiDAR, IMU, and camera integration.",
+        "Built custom object detection models (YOLO, OpenPose) for surveillance and safety compliance.",
+        "Developed a CNN-based real-time weld anomaly detection system (YOLOv5) on edge computing for an automotive manufacturer.",
+        "Built CI/CD pipelines using Docker Compose and Kubernetes for model retraining and deployment."
+      ],
+      "achievements": [
+        "Achieved 80% improvement in document retrieval efficiency through ANN search and embedding optimization.",
+        "Improved query accuracy and reduced response times by 20% using agentic query routing.",
+        "Achieved 95% accuracy in human presence and protective gear detection.",
+        "Reduced manual inspection overhead for an automotive manufacturer."
+      ],
+      "technologies": [
+        "Python",
+        "TensorFlow",
+        "PyTorch",
+        "Scikit-learn",
+        "MLflow",
+        "LangChain",
+        "Unstructured-io",
+        "ChromaDB",
+        "OpenAI",
+        "OpenCV",
+        "GAN",
+        "ROS",
+        "MQTT",
+        "PostgreSQL",
+        "AWS",
+        "Azure",
+        "Docker",
+        "Kubernetes",
+        "YOLO",
+        "YOLOv5",
+        "OpenPose"
+      ]
+    },
+    {
+      "company": "E-emphasys Solutions PVT. LTD.",
+      "role": "Software Engineer II (Machine Learning Engineer)",
+      "period": "",
+      "responsibilities": [
+        "Built NLP models for text summarization, classification, and predictive analytics for quality control.",
+        "Developed recommendation models using frequent itemset mining and time-series analysis.",
+        "Implemented LDA-based topic modeling for technician support systems.",
+        "Designed and implemented an integrated predictive rental availability timeline feature using React JS and time-series/event-based data."
+      ],
+      "achievements": [
+        "Improved product maintenance efficiency by 25%.",
+        "Enhanced sales by 15% through targeted product placement recommendations.",
+        "Reduced technician support time by 30%."
+      ],
+      "technologies": [
+        "Python",
+        "Flask",
+        "REST APIs",
+        "NLP",
+        "Time Series",
+        "TensorFlow/Keras",
+        "PyTorch",
+        "Scikit-learn",
+        "Docker",
+        "MLflow",
+        "MySQL",
+        "PostgreSQL",
+        "React JS",
+        "AWS",
+        "Azure"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "Enterprise AI Contract Intelligence Platform",
+      "problem": "Automate clause extraction, risk assessment, and legal workflow handoffs from contracts.",
+      "role": "Lead AI Engineer",
+      "architecture": "LangGraph-based Captain-Worker multi-agent architecture combined with RAG and model-serving APIs.",
+      "technologies": [
+        "LangGraph",
+        "Pydantic",
+        "Python",
+        "RAG"
+      ],
+      "decisions": [
+        {
+          "decision": "Implemented Captain-Worker architecture in LangGraph",
+          "reason": "Enable specialist agents to execute legal-risk, compliance, scoring, and recommendation tasks concurrently.",
+          "tradeoffs": []
+        },
+        {
+          "decision": "Designed a reusable RAG framework using targeted retrieval, metadata filtering, context optimization, and batched processing",
+          "reason": "Improve consistency and reduce unnecessary LLM usage.",
+          "tradeoffs": []
+        }
+      ],
+      "challenges": [],
+      "metrics": [],
+      "lessons": [],
+      "answerHooks": [
+        "contract intelligence",
+        "RAG architecture",
+        "multi-agent orchestration",
+        "Captain-Worker",
+        "LangGraph",
+        "legal AI",
+        "clause extraction",
+        "risk assessment",
+        "compliance agents",
+        "metadata filtering",
+        "context optimization",
+        "batched processing",
+        "model-provider abstraction",
+        "structured outputs",
+        "fallback execution"
+      ],
+      "examples": [
+        {
+          "title": "Targeted RAG plus specialist-agent orchestration",
+          "situation": "Automate clause extraction, risk assessment, and downstream workflow handoffs from contracts.",
+          "approach": "Combined targeted retrieval, metadata filtering, context optimization, and batched processing with a LangGraph Captain-Worker architecture for concurrent legal-risk, compliance, scoring, and recommendation tasks.",
+          "result": "The RAG design was intended to improve consistency and reduce unnecessary LLM usage.",
+          "relevance": [
+            "RAG",
+            "agentic AI",
+            "LangGraph",
+            "orchestration",
+            "legal AI",
+            "context optimization"
+          ]
+        },
+        {
+          "title": "Reusable production controls for LLM workflows",
+          "approach": "Established Pydantic output contracts, model-provider abstraction, embedding caches, retry policies, and fallback execution paths as reusable platform capabilities.",
+          "relevance": [
+            "production GenAI",
+            "reliability",
+            "structured output",
+            "fallback",
+            "provider abstraction"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Multi-modal AI for Engineering Drawing Automation",
+      "problem": "Automate the interpretation of complex railway signal-plan engineering drawings.",
+      "role": "Lead AI Engineer",
+      "architecture": "Python processing pipeline integrating PDF validation, image preprocessing, custom YOLOv8 object detection, vector retrieval, and multimodal LLM generation.",
+      "technologies": [
+        "Python",
+        "YOLOv8",
+        "Multimodal LLMs",
+        "Vector Databases"
+      ],
+      "decisions": [
+        {
+          "decision": "Integrated computer-vision models, vector retrieval services, and multimodal models in one processing workflow",
+          "reason": "Improve grounding and reduce unsupported model responses.",
+          "tradeoffs": []
+        }
+      ],
+      "challenges": [
+        {
+          "challenge": "Ground multimodal model outputs in engineering evidence and reduce unsupported responses.",
+          "solution": "Integrated computer-vision detections, vector retrieval services, and multimodal models in the processing workflow."
+        },
+        {
+          "challenge": "Improve reliability and traceability of generated engineering reports.",
+          "solution": "Implemented structured prompting, output validation, and error-handling mechanisms."
+        }
+      ],
+      "metrics": [],
+      "lessons": [
+        "Created a reusable multimodal architecture that can be extended to other engineering-document and network-diagram interpretation workflows."
+      ],
+      "answerHooks": [
+        "VLM",
+        "vision-language model",
+        "multimodal vision",
+        "visual agent",
+        "vision agent",
+        "perception worker",
+        "YOLO plus VLM",
+        "object detection",
+        "computer vision",
+        "image understanding",
+        "multimodal reasoning",
+        "engineering drawing",
+        "image preprocessing",
+        "grounded vision pipeline",
+        "detector plus multimodal model"
+      ],
+      "examples": [
+        {
+          "title": "Hybrid perception plus multimodal reasoning",
+          "situation": "Railway signal-plan drawings required both reliable visual detection and higher-level engineering interpretation.",
+          "approach": "Used PDF validation, image preprocessing, custom YOLOv8 object detection, domain knowledge retrieval, and multimodal LLM-based report generation.",
+          "result": "The integration workflow was designed to improve grounding and reduce unsupported model responses.",
+          "relevance": [
+            "VLM",
+            "perception worker",
+            "YOLO",
+            "object detection",
+            "computer vision",
+            "multimodal reasoning",
+            "visual agent"
+          ]
+        },
+        {
+          "title": "Reliable multimodal report generation",
+          "approach": "Applied structured prompting, output validation, and error-handling mechanisms around generated engineering reports.",
+          "result": "Improved the reliability and traceability of generated engineering reports.",
+          "relevance": [
+            "output validation",
+            "multimodal reliability",
+            "traceability",
+            "prompting",
+            "error handling"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Autonomous Inventory Vehicle",
+      "problem": "Dynamic obstacle detection and path planning in warehouse environments.",
+      "role": "Senior AI Engineer",
+      "architecture": "ROS-based vehicle integrating LiDAR, IMU, and camera sensors.",
+      "technologies": [
+        "ROS",
+        "LiDAR",
+        "IMU",
+        "Cameras"
+      ],
+      "decisions": [],
+      "challenges": [],
+      "metrics": [],
+      "lessons": [],
+      "answerHooks": [
+        "robotics",
+        "autonomous vehicle",
+        "warehouse robot",
+        "ROS",
+        "LiDAR",
+        "IMU",
+        "camera fusion",
+        "obstacle detection",
+        "path planning"
+      ],
+      "examples": [
+        {
+          "title": "Multi-sensor autonomous inventory vehicle",
+          "situation": "Dynamic obstacle detection and path planning in warehouse environments.",
+          "approach": "Built a ROS-based vehicle integrating LiDAR, IMU, and camera sensors.",
+          "relevance": [
+            "robotics",
+            "ROS",
+            "LiDAR",
+            "sensor integration",
+            "obstacle detection",
+            "path planning"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "RecallZero — GenAI-Powered Automotive Post-Market Surveillance",
+      "problem": "Identify emerging defect patterns from unstructured NHTSA consumer complaints before they become obvious through conventional recall monitoring.",
+      "role": "Architect / Developer",
+      "architecture": "Evidence-first automotive safety surveillance platform combining NVIDIA Nemotron NIM and NVIDIA embeddings for event normalization, semantic clustering and failure lineage, explainable safety-signal analysis, historical replay, statistical surveillance methods, and GenAI-assisted investigation.",
+      "technologies": [
+        "NVIDIA Nemotron NIM",
+        "NVIDIA Embeddings",
+        "Generative AI",
+        "Semantic Clustering",
+        "Anomaly Detection",
+        "Temporal Validation",
+        "Agentic AI",
+        "Statistical Signal Detection",
+        "MLOps / Model Governance"
+      ],
+      "decisions": [
+        {
+          "decision": "Constrained GenAI agents to evidence investigation, semantic adjudication, diagnostics, and engineering-brief generation",
+          "reason": "Keep statistical detection and alert decisions measurable and auditable.",
+          "tradeoffs": []
+        },
+        {
+          "decision": "Developed a Time Machine historical-replay framework that hides future recall information at a historical cutoff",
+          "reason": "Prevent future-information leakage during historical detector evaluation.",
+          "tradeoffs": []
+        },
+        {
+          "decision": "Designed the next-generation detector-discovery architecture to combine statistical surveillance with learned ranking and temporal validation",
+          "reason": "Evaluate safety signals with measurable statistical methods and deterministic false-alert policies.",
+          "tradeoffs": []
+        }
+      ],
+      "challenges": [
+        {
+          "challenge": "Noisy customer narratives describe engineering failures in inconsistent language.",
+          "solution": "Normalized complaints into structured engineering failure events, severity indicators, and semantic signatures using NVIDIA Nemotron NIM and NVIDIA embeddings."
+        },
+        {
+          "challenge": "Differently worded complaints can represent a common engineering failure pattern.",
+          "solution": "Used semantic clustering and failure-lineage detection across vehicle systems, model years, and failure mechanisms."
+        },
+        {
+          "challenge": "Historical validation can leak future recall information and overstate detector quality.",
+          "solution": "Used historical cutoffs, detector freezes, benchmark locks, positive/control cohorts, temporal snapshots, provenance hashes, and anti-leakage checks."
+        }
+      ],
+      "metrics": [],
+      "lessons": [
+        "Used failed generalization results to identify weaknesses in hand-tuned scoring rather than optimizing the POC to a single successful demonstration.",
+        "Kept statistical detection and alert decisions measurable and auditable while using GenAI for investigation and semantic adjudication."
+      ],
+      "answerHooks": [
+        "NVIDIA NIM",
+        "Nemotron",
+        "NVIDIA embeddings",
+        "automotive AI",
+        "vehicle defects",
+        "consumer complaints",
+        "NHTSA",
+        "semantic clustering",
+        "anomaly detection",
+        "early warning",
+        "post-market surveillance",
+        "time series detection",
+        "temporal validation",
+        "historical replay",
+        "data leakage",
+        "evidence-first AI",
+        "safety-critical AI",
+        "agentic AI",
+        "statistical versus GenAI architecture",
+        "PRR",
+        "ROR",
+        "Bayesian shrinkage",
+        "EWMA",
+        "CUSUM",
+        "change-point detection",
+        "model governance",
+        "false alerts",
+        "explainable AI"
+      ],
+      "examples": [
+        {
+          "title": "Evidence-first complaint normalization and clustering",
+          "situation": "Unstructured NHTSA consumer complaints describe similar vehicle failures using different language.",
+          "approach": "Used NVIDIA Nemotron NIM and NVIDIA embeddings to normalize narratives into engineering failure events, severity indicators, and semantic signatures, then clustered related complaints into failure lineages.",
+          "relevance": [
+            "NVIDIA NIM",
+            "embeddings",
+            "semantic clustering",
+            "unstructured data",
+            "automotive safety",
+            "event normalization"
+          ]
+        },
+        {
+          "title": "Time Machine anti-leakage validation",
+          "situation": "Historical defect detection must be evaluated without exposing the detector to recall information that became known later.",
+          "approach": "Froze the detector at a historical cutoff, hid future recall information, replayed only data available at that date, and revealed the eventual outcome afterward.",
+          "result": "The framework was designed to prevent future-information leakage during historical replay.",
+          "relevance": [
+            "temporal validation",
+            "historical replay",
+            "data leakage",
+            "backtesting",
+            "evaluation"
+          ]
+        },
+        {
+          "title": "Separation of statistical detection and GenAI investigation",
+          "approach": "Kept statistical detection and alert decisions measurable and auditable while constraining GenAI agents to evidence investigation, semantic adjudication, diagnostics, and engineering-brief generation.",
+          "relevance": [
+            "agentic AI",
+            "safety-critical AI",
+            "deterministic alerts",
+            "statistical detection",
+            "governance",
+            "explainability"
+          ]
+        }
+      ]
+    }
+  ],
+  "skills": [
+    "LLMs",
+    "VLMs",
+    "RAG",
+    "Agentic AI",
+    "LangChain",
+    "LangGraph",
+    "Hugging Face",
+    "OpenAI",
+    "Prompt Engineering",
+    "DeepEval",
+    "RAGAS",
+    "vLLM",
+    "PyTorch",
+    "TensorFlow",
+    "Scikit-learn",
+    "Computer Vision",
+    "NLP",
+    "Time-Series Analysis",
+    "FastAPI",
+    "Flask",
+    "REST APIs",
+    "Pydantic",
+    "Microservices",
+    "Docker",
+    "Kubernetes",
+    "AWS",
+    "Azure",
+    "CI/CD",
+    "PostgreSQL",
+    "MySQL",
+    "MongoDB",
+    "Vector Databases",
+    "Databricks",
+    "Delta Lake",
+    "NVIDIA Nemotron NIM",
+    "NVIDIA Embeddings",
+    "Semantic Clustering",
+    "Anomaly Detection",
+    "Temporal Validation",
+    "Statistical Signal Detection",
+    "MLOps / Model Governance",
+    "Safety-Critical AI"
+  ],
+  "achievements": [
+    "Achieved 80% improvement in document retrieval efficiency using ANN search and embedding optimization.",
+    "Reduced response times by 20% and improved accuracy using multi-domain agentic RAG routing.",
+    "Achieved 95% accuracy in safety compliance object detection (human presence and protective gear).",
+    "Improved product maintenance efficiency by 25% via NLP-powered virtual assistant.",
+    "Enhanced sales by 15% through time-series and frequent itemset recommendation algorithms.",
+    "Reduced technician support time by 30% using LDA topic modeling."
+  ],
+  "facts": [
+    "Has close to 10 years of experience across software engineering, GenAI/Agentic AI, computer vision, and robotics.",
+    "Worked at NTT DATA as Lead AI Engineer.",
+    "Worked at Capgemini Engineering as Professional II (Senior AI Engineer).",
+    "Worked at E-emphasys Solutions as Software Engineer II (Machine Learning Engineer).",
+    "Architected and developed RecallZero, an evidence-first automotive safety surveillance POC for emerging defect-pattern detection from NHTSA consumer complaints."
+  ],
+  "sources": [
+    {
+      "id": "src_f8207ccc-e939-4e9a-8b40-89b2d617f706",
+      "filename": "senior_ai_eng.pdf",
+      "type": "resume",
+      "uploadedAt": "2026-08-23T09:40:48.318Z",
+      "summary": "Resume of a Senior AI Engineer with close to 10 years of experience specializing in GenAI, Agentic AI, Computer Vision, and Machine Learning across enterprise environments.",
+      "facts": [
+        "Has close to 10 years of experience across software engineering, GenAI/Agentic AI, computer vision, and robotics.",
+        "Worked at NTT DATA as Lead AI Engineer.",
+        "Worked at Capgemini Engineering as Professional II (Senior AI Engineer).",
+        "Worked at E-emphasys Solutions as Software Engineer II (Machine Learning Engineer)."
+      ],
+      "keywords": [
+        "Senior AI Engineer",
+        "GenAI",
+        "Agentic AI",
+        "RAG",
+        "LangChain",
+        "LangGraph",
+        "YOLOv8",
+        "Computer Vision",
+        "ROS",
+        "PyTorch",
+        "TensorFlow"
+      ],
+      "rawExcerpt": "Senior AI Engineer \n \nPROFILE STATEMENT \n \nSenior AI Engineer and technical advisor with close to 10 years of experience across software engineering, \nGenAI/Agentic   AI   solution   architecture,   computer   vision   and robotics   in   enterprise   and   product \norganizations.   Skilled   at   acting   as   the   technical bridge   between   engineering,   business   and   client \nstakeholders - leading technical discovery, designing and demonstrating scalable AI solutions (RAG, multi-\nagent  Agentic AI  systems,  multimodal  LLMs/VLMs),  resolving  integration  challenges,  and  mentoring \ndevelopment  teams  toward  production  adoption.  Strong  communicator  able  to  translate complex  AI \nconcepts for audiences ranging from engineers to business executives, with a growing focus on developer \nenablement and technology adoption. \n   \nTECHNICAL SKILLS \n \nGenerative AI: LLMs, VLMs, RAG, Agentic AI, LangChain, LangGraph, Hugging Face, OpenAI, Multimodal \nModels, Prompt Engineering, Model Evaluation (DeepEval, RAGAS), vLLM, GPU inferencing \nAI/ML/DL: PyTorch, TensorFlow/Keras, Scikit-learn, Computer vision, NLP, Time-Series Analysis \nBackend & Cloud Engineering: Python, FastAPI, Flask, REST APIs, Pydantic, Asynchronous Programming, \nMicroservices, Docker, Kubernetes, AWS, Azure, CI/CD, Git, Linux \nData & Retrieval: PostgreSQL, MySQL, MongoDB, Vector Databases, Databricks, Delta Lake \nPartner & Technical Enablement: Technical discovery, solution architecture walkthroughs, proof-of-\nconcept delivery, developer mentoring, cross-functional stakeholder communication (engineering to \nexecutive), production-readiness guidance \n \n \nNON-TECHNICAL SKILLS   \n \nLeadership, Communication, Time Management, Event Management, Teamwork.  \n \nPROFESSIONAL EXPERIENCE \n \n \n Company Name: NTT DATA \nRole: Lead AI Engineer \nSkills: Python, TensorFlow,  PyTorch,  GEN  AI  (LLM,  RAG,  Langraph, Agentic  AI,  ollama, Orchestration, \ndeepeval, ragas), PostgreSQL, AWS & Azure Services, docker, Kubernetes, Linux, git. \nProject Highlights: \n1. Enterprise AI Contract Intelligence Platform \n• Architected  a  contract  intelligence  platform  combining  RAG,  multi-agent  orchestration  and \nmodel-serving   APIs   to   automate   clause   extraction,   risk   assessment   and   downstream \nworkflow handoffs. \n• Defined   the   architecture   across   document   ingestion,   OCR,   clause-level   retrieval,   LLM \nreasoning, structured outputs, governance, monitoring and enterprise integrations. \n• Designed  a  reusable  RAG  framework  using  targeted  retrieval,  metadata  filtering,  context \noptimization  and  batched  processing  to  improve  consistency  and  reduce  unnecessary  LLM \nusage. \n\n• Developed  a  LangGraph-based  Captain-Worker  architecture  enabling  specialist  agents  to \nexecute legal-risk, compliance, scoring and recommendation tasks concurrently. \n• Established   reusable   platform   capabilities   including   Pydantic   output   contracts,   model-\nprovider abstraction, embedding caches, retry policies and fallback execution paths. \n \n2. Multi-modal AI for Engineering Drawing Automation \n• Designed a multimodal AI solution to automate the interpretation of complex railway signal-\nplan drawings used by multiple engineering departments. \n• Developed    a    Python-based    processing    pipeline    combining    PDF    validation,    image \npreprocessing, custom YOLOv8 object detection, domain knowledge retrieval and multimodal \nLLM-based report generation. \n• Designed  integration  workflows  between  computer-vision  models,  vector  retrieval  services \nand multimodal models to improve grounding and reduce unsupported model responses. \n• Implemented  structured  prompting,  output  validation  and  error-handling  mechanisms  to \nimprove the reliability and traceability of generated engineering reports. \n• Worked   directly   with   domain   experts   and   client   stakeholders   to   convert   engineering \nrequirements into technical processing rules and solution architectures. \n• Investigated  model-quality  and  integration  issues,  incorporated  stakeholder  feedback  and \nimproved the workflow through iterative testing and validation. \n• Created  a  reusable  architecture  capable  of  being  extended  to  other  engineering-document \nand network-diagram interpretation workflows. \n \n3. Technical Leadership and Partner Enablement \n• Conducted  technical discovery sessions with customers and domain specialists to identify AI \nopportunities, workflow constraints and integration requirements. \n• Presented solution architectures, model choices, implementation trade-offs and AI limitations \nto both engineering and business stakeholders. \n• Guided  development  teams  on  RAG,  multimodal  AI,  API  integration,  prompt  design  and \nproduction-readiness considerations. \n• Supported  proof-of-concept  development,  technical  demonstrations,  issue  resolution  and \ntransition of AI solutions toward enterprise adoption. \n• Mentored  developers  and  reviewed  technical  designs,  implementation  approaches  and  AI \nworkflow quality. \n• Collected   implementation   feedback   and   converted   recurring   technical   challenges   into \nreusable design patterns and solution improvements. \n \n \n Company Name: CAPGEMINI ENGINEERING (Centre of Excellence) \nRole: Professional II (Senior AI Engineer) \nSkills: Python, TensorFlow,  PyTorch,  Scikit-learn,  MLFlow,  GEN  AI (LLM, RAG,  Langchain,  unstructured-io, \nAgents, ollama, huggingface, deepeval, ragas), openCV, GAN, ROS, MQTT, PostgreSQL, AWS & Azure Services, \ndocker, Kubernetes, Linux, git, JIRA, Scrum. \n \nProjects Highlights: \n• Designed    a    LangChain-based    RAG    pipeline    with    ChromaDB    and    OpenAI,    achieving    80% \nimprovement in document retrieval efficiency through ANN search and embedding optimization for \nan industrial client. \n• Built   a   multi-domain   conversational   AI   system   with   LangChain-based ",
+      "contribution": {
+        "profile": {
+          "headline": "Senior AI Engineer",
+          "summary": "Senior AI Engineer and technical advisor with close to 10 years of experience across software engineering, GenAI/Agentic AI solution architecture, computer vision, and robotics in enterprise and product organizations.",
+          "strengths": [
+            "Translating complex AI concepts for engineering and business stakeholders",
+            "Designing multi-agent systems and RAG architectures",
+            "End-to-end computer vision and multimodal AI solutions",
+            "Technical discovery and developer enablement"
+          ]
+        },
+        "targetRole": {
+          "title": "",
+          "company": "",
+          "priorities": [],
+          "requirements": []
+        },
+        "experience": [
+          {
+            "company": "NTT DATA",
+            "role": "Lead AI Engineer",
+            "period": "",
+            "responsibilities": [
+              "Architected an Enterprise AI Contract Intelligence Platform combining RAG, multi-agent orchestration, and model-serving APIs.",
+              "Designed a Captain-Worker multi-agent architecture using LangGraph for concurrent legal-risk, compliance, scoring, and recommendation tasks.",
+              "Designed a multimodal AI processing pipeline for railway signal-plan drawings using PDF validation, image preprocessing, custom YOLOv8, domain knowledge retrieval, and LLM report generation.",
+              "Conducted technical discovery sessions and presented AI solution architectures, model choices, and trade-offs to stakeholders.",
+              "Guided development teams on RAG, multimodal AI, API integration, and prompt design."
+            ],
+            "achievements": [
+              "Created reusable RAG frameworks and platform capabilities including Pydantic output contracts, model-provider abstraction, and fallback execution paths.",
+              "Developed extensible multimodal architectures applicable to complex engineering document interpretation."
+            ],
+            "technologies": [
+              "Python",
+              "TensorFlow",
+              "PyTorch",
+              "LLM",
+              "RAG",
+              "LangGraph",
+              "Agentic AI",
+              "Ollama",
+              "DeepEval",
+              "RAGAS",
+              "PostgreSQL",
+              "AWS",
+              "Azure",
+              "Docker",
+              "Kubernetes",
+              "Linux",
+              "Git",
+              "YOLOv8"
+            ]
+          },
+          {
+            "company": "CAPGEMINI ENGINEERING (Centre of Excellence)",
+            "role": "Professional II (Senior AI Engineer)",
+            "period": "",
+            "responsibilities": [
+              "Designed a LangChain-based RAG pipeline with ChromaDB and OpenAI.",
+              "Built a multi-domain conversational AI system with agent routing across specialized RAG models.",
+              "Developed an autonomous inventory vehicle using ROS with LiDAR, IMU, and camera integration.",
+              "Built custom object detection models (YOLO, OpenPose) for surveillance and safety compliance.",
+              "Developed a CNN-based real-time weld anomaly detection system (YOLOv5) on edge computing for an automotive manufacturer.",
+              "Built CI/CD pipelines using Docker Compose and Kubernetes for model retraining and deployment."
+            ],
+            "achievements": [
+              "Achieved 80% improvement in document retrieval efficiency through ANN search and embedding optimization.",
+              "Improved query accuracy and reduced response times by 20% using agentic query routing.",
+              "Achieved 95% accuracy in human presence and protective gear detection.",
+              "Reduced manual inspection overhead for an automotive manufacturer."
+            ],
+            "technologies": [
+              "Python",
+              "TensorFlow",
+              "PyTorch",
+              "Scikit-learn",
+              "MLflow",
+              "LangChain",
+              "Unstructured-io",
+              "ChromaDB",
+              "OpenAI",
+              "OpenCV",
+              "GAN",
+              "ROS",
+              "MQTT",
+              "PostgreSQL",
+              "AWS",
+              "Azure",
+              "Docker",
+              "Kubernetes",
+              "YOLO",
+              "YOLOv5",
+              "OpenPose"
+            ]
+          },
+          {
+            "company": "E-emphasys Solutions PVT. LTD.",
+            "role": "Software Engineer II (Machine Learning Engineer)",
+            "period": "",
+            "responsibilities": [
+              "Built NLP models for text summarization, classification, and predictive analytics for quality control.",
+              "Developed recommendation models using frequent itemset mining and time-series analysis.",
+              "Implemented LDA-based topic modeling for technician support systems.",
+              "Designed and implemented an integrated predictive rental availability timeline feature using React JS and time-series/event-based data."
+            ],
+            "achievements": [
+              "Improved product maintenance efficiency by 25%.",
+              "Enhanced sales by 15% through targeted product placement recommendations.",
+              "Reduced technician support time by 30%."
+            ],
+            "technologies": [
+              "Python",
+              "Flask",
+              "REST APIs",
+              "NLP",
+              "Time Series",
+              "TensorFlow/Keras",
+              "PyTorch",
+              "Scikit-learn",
+              "Docker",
+              "MLflow",
+              "MySQL",
+              "PostgreSQL",
+              "React JS",
+              "AWS",
+              "Azure"
+            ]
+          }
+        ],
+        "projects": [
+          {
+            "name": "Enterprise AI Contract Intelligence Platform",
+            "problem": "Automate clause extraction, risk assessment, and legal workflow handoffs from contracts.",
+            "role": "Lead AI Engineer",
+            "architecture": "LangGraph-based Captain-Worker multi-agent architecture combined with RAG and model-serving APIs.",
+            "technologies": [
+              "LangGraph",
+              "Pydantic",
+              "Python",
+              "RAG"
+            ],
+            "decisions": [
+              {
+                "decision": "Implemented Captain-Worker architecture in LangGraph",
+                "reason": "Enable specialist agents to execute legal-risk, compliance, scoring, and recommendation tasks concurrently.",
+                "tradeoffs": []
+              },
+              {
+                "decision": "Designed a reusable RAG framework using targeted retrieval, metadata filtering, context optimization, and batched processing",
+                "reason": "Improve consistency and reduce unnecessary LLM usage.",
+                "tradeoffs": []
+              }
+            ],
+            "challenges": [],
+            "metrics": [],
+            "lessons": [],
+            "answerHooks": [
+              "contract intelligence",
+              "RAG architecture",
+              "multi-agent orchestration",
+              "Captain-Worker",
+              "LangGraph",
+              "legal AI",
+              "clause extraction",
+              "risk assessment",
+              "compliance agents",
+              "metadata filtering",
+              "context optimization",
+              "batched processing",
+              "model-provider abstraction",
+              "structured outputs",
+              "fallback execution"
+            ],
+            "examples": [
+              {
+                "title": "Targeted RAG plus specialist-agent orchestration",
+                "situation": "Automate clause extraction, risk assessment, and downstream workflow handoffs from contracts.",
+                "approach": "Combined targeted retrieval, metadata filtering, context optimization, and batched processing with a LangGraph Captain-Worker architecture for concurrent legal-risk, compliance, scoring, and recommendation tasks.",
+                "result": "The RAG design was intended to improve consistency and reduce unnecessary LLM usage.",
+                "relevance": [
+                  "RAG",
+                  "agentic AI",
+                  "LangGraph",
+                  "orchestration",
+                  "legal AI",
+                  "context optimization"
+                ]
+              },
+              {
+                "title": "Reusable production controls for LLM workflows",
+                "approach": "Established Pydantic output contracts, model-provider abstraction, embedding caches, retry policies, and fallback execution paths as reusable platform capabilities.",
+                "relevance": [
+                  "production GenAI",
+                  "reliability",
+                  "structured output",
+                  "fallback",
+                  "provider abstraction"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Multi-modal AI for Engineering Drawing Automation",
+            "problem": "Automate the interpretation of complex railway signal-plan engineering drawings.",
+            "role": "Lead AI Engineer",
+            "architecture": "Python processing pipeline integrating PDF validation, image preprocessing, custom YOLOv8 object detection, vector retrieval, and multimodal LLM generation.",
+            "technologies": [
+              "Python",
+              "YOLOv8",
+              "Multimodal LLMs",
+              "Vector Databases"
+            ],
+            "decisions": [
+              {
+                "decision": "Integrated computer-vision models, vector retrieval services, and multimodal models in one processing workflow",
+                "reason": "Improve grounding and reduce unsupported model responses.",
+                "tradeoffs": []
+              }
+            ],
+            "challenges": [
+              {
+                "challenge": "Ground multimodal model outputs in engineering evidence and reduce unsupported responses.",
+                "solution": "Integrated computer-vision detections, vector retrieval services, and multimodal models in the processing workflow."
+              },
+              {
+                "challenge": "Improve reliability and traceability of generated engineering reports.",
+                "solution": "Implemented structured prompting, output validation, and error-handling mechanisms."
+              }
+            ],
+            "metrics": [],
+            "lessons": [
+              "Created a reusable multimodal architecture that can be extended to other engineering-document and network-diagram interpretation workflows."
+            ],
+            "answerHooks": [
+              "VLM",
+              "vision-language model",
+              "multimodal vision",
+              "visual agent",
+              "vision agent",
+              "perception worker",
+              "YOLO plus VLM",
+              "object detection",
+              "computer vision",
+              "image understanding",
+              "multimodal reasoning",
+              "engineering drawing",
+              "image preprocessing",
+              "grounded vision pipeline",
+              "detector plus multimodal model"
+            ],
+            "examples": [
+              {
+                "title": "Hybrid perception plus multimodal reasoning",
+                "situation": "Railway signal-plan drawings required both reliable visual detection and higher-level engineering interpretation.",
+                "approach": "Used PDF validation, image preprocessing, custom YOLOv8 object detection, domain knowledge retrieval, and multimodal LLM-based report generation.",
+                "result": "The integration workflow was designed to improve grounding and reduce unsupported model responses.",
+                "relevance": [
+                  "VLM",
+                  "perception worker",
+                  "YOLO",
+                  "object detection",
+                  "computer vision",
+                  "multimodal reasoning",
+                  "visual agent"
+                ]
+              },
+              {
+                "title": "Reliable multimodal report generation",
+                "approach": "Applied structured prompting, output validation, and error-handling mechanisms around generated engineering reports.",
+                "result": "Improved the reliability and traceability of generated engineering reports.",
+                "relevance": [
+                  "output validation",
+                  "multimodal reliability",
+                  "traceability",
+                  "prompting",
+                  "error handling"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Autonomous Inventory Vehicle",
+            "problem": "Dynamic obstacle detection and path planning in warehouse environments.",
+            "role": "Senior AI Engineer",
+            "architecture": "ROS-based vehicle integrating LiDAR, IMU, and camera sensors.",
+            "technologies": [
+              "ROS",
+              "LiDAR",
+              "IMU",
+              "Cameras"
+            ],
+            "decisions": [],
+            "challenges": [],
+            "metrics": [],
+            "lessons": [],
+            "answerHooks": [
+              "robotics",
+              "autonomous vehicle",
+              "warehouse robot",
+              "ROS",
+              "LiDAR",
+              "IMU",
+              "camera fusion",
+              "obstacle detection",
+              "path planning"
+            ],
+            "examples": [
+              {
+                "title": "Multi-sensor autonomous inventory vehicle",
+                "situation": "Dynamic obstacle detection and path planning in warehouse environments.",
+                "approach": "Built a ROS-based vehicle integrating LiDAR, IMU, and camera sensors.",
+                "relevance": [
+                  "robotics",
+                  "ROS",
+                  "LiDAR",
+                  "sensor integration",
+                  "obstacle detection",
+                  "path planning"
+                ]
+              }
+            ]
+          }
+        ],
+        "skills": [
+          "LLMs",
+          "VLMs",
+          "RAG",
+          "Agentic AI",
+          "LangChain",
+          "LangGraph",
+          "Hugging Face",
+          "OpenAI",
+          "Prompt Engineering",
+          "DeepEval",
+          "RAGAS",
+          "vLLM",
+          "PyTorch",
+          "TensorFlow",
+          "Scikit-learn",
+          "Computer Vision",
+          "NLP",
+          "Time-Series Analysis",
+          "FastAPI",
+          "Flask",
+          "REST APIs",
+          "Pydantic",
+          "Microservices",
+          "Docker",
+          "Kubernetes",
+          "AWS",
+          "Azure",
+          "CI/CD",
+          "PostgreSQL",
+          "MySQL",
+          "MongoDB",
+          "Vector Databases",
+          "Databricks",
+          "Delta Lake"
+        ],
+        "achievements": [
+          "Achieved 80% improvement in document retrieval efficiency using ANN search and embedding optimization.",
+          "Reduced response times by 20% and improved accuracy using multi-domain agentic RAG routing.",
+          "Achieved 95% accuracy in safety compliance object detection (human presence and protective gear).",
+          "Improved product maintenance efficiency by 25% via NLP-powered virtual assistant.",
+          "Enhanced sales by 15% through time-series and frequent itemset recommendation algorithms.",
+          "Reduced technician support time by 30% using LDA topic modeling."
+        ],
+        "facts": [
+          "Has close to 10 years of experience across software engineering, GenAI/Agentic AI, computer vision, and robotics.",
+          "Worked at NTT DATA as Lead AI Engineer.",
+          "Worked at Capgemini Engineering as Professional II (Senior AI Engineer).",
+          "Worked at E-emphasys Solutions as Software Engineer II (Machine Learning Engineer)."
+        ]
+      }
+    },
+    {
+      "id": "src_recallzero_v8",
+      "filename": "RecallZero — Resume Project Entry.md",
+      "type": "project",
+      "uploadedAt": "2026-08-23T19:55:00.000Z",
+      "summary": "Hackathon/client POC for evidence-first automotive post-market surveillance using GenAI normalization, semantic clustering, temporal validation, statistical signal detection, and auditable agent-assisted investigation.",
+      "facts": [
+        "Architected and developed an evidence-first automotive safety surveillance platform for emerging defect-pattern detection from NHTSA consumer complaints.",
+        "Used NVIDIA Nemotron NIM and NVIDIA embeddings for complaint event normalization and semantic signatures.",
+        "Built historical replay and anti-leakage validation to evaluate defect detection at past cutoffs.",
+        "Separated measurable statistical detection and alert decisions from GenAI-assisted evidence investigation and engineering-brief generation."
+      ],
+      "keywords": [
+        "RecallZero",
+        "NHTSA",
+        "NVIDIA Nemotron NIM",
+        "NVIDIA embeddings",
+        "semantic clustering",
+        "post-market surveillance",
+        "anomaly detection",
+        "temporal validation",
+        "agentic AI",
+        "statistical signal detection",
+        "MLOps",
+        "safety-critical AI"
+      ],
+      "rawExcerpt": "## RecallZero — GenAI-Powered Automotive Post-Market Surveillance\n**Hackathon Project | Client POC**\n\nArchitected and developed an evidence-first automotive safety surveillance platform to identify emerging defect patterns from unstructured NHTSA consumer complaints before they become obvious through conventional recall monitoring.\n\n- Built a **GenAI event-normalization pipeline using NVIDIA Nemotron NIM and NVIDIA embeddings** to transform noisy customer narratives such as “vehicle suddenly died while driving” into structured engineering failure events, severity indicators, and semantic signatures.\n- Designed **semantic clustering and failure-lineage detection** to consolidate differently worded complaints into common engineering patterns across vehicle systems, model years, and failure mechanisms.\n- Implemented an explainable safety-signal pipeline combining **trend, persistence, evidence volume, severity, affected breadth, and historical recall coverage**, with traceability from risk factors back to individual NHTSA ODI complaints.\n- Developed a **Time Machine historical-replay framework** that freezes the detector at a historical cutoff, hides future recall information, replays only information available at that date, and reveals the eventual outcome afterward to prevent future-information leakage.\n- Established a reproducible validation framework using **detector freezes, benchmark locks, positive/control cohorts, temporal snapshots, provenance hashes, anti-leakage checks, and alert-burden metrics**.\n- Validated the detector on historical positive and control cases and used failed generalization results to identify weaknesses in hand-tuned scoring rather than optimizing the POC to a single successful demonstration.\n- Designed the next-generation **AutoResearch / Detector Discovery architecture** combining statistical surveillance methods such as PRR/ROR, Bayesian shrinkage, EWMA/CUSUM and change-point detection with learned ranking, temporal validation, and deterministic false-alert policies.\n- Constrained GenAI agents to **evidence investigation, semantic adjudication, diagnostics, and engineering-brief generation**, keeping statistical detection and alert decisions measurable and auditable.\n- Extended the POC toward multi-vehicle/manufacturer analysis and integration with engineering workflows through an **Action Center, investigator agent, engineering briefs, and proactive alert integrations**.\n\n**Core concepts:** Generative AI, NVIDIA NIM, embeddings, semantic clustering, post-market surveillance, anomaly detection, temporal validation, explainable AI, agentic AI, statistical signal detection, MLOps/model governance, safety-critical AI.",
+      "contribution": {
+        "projects": [
+          {
+            "name": "RecallZero — GenAI-Powered Automotive Post-Market Surveillance",
+            "problem": "Identify emerging defect patterns from unstructured NHTSA consumer complaints before they become obvious through conventional recall monitoring.",
+            "role": "Architect / Developer",
+            "architecture": "Evidence-first automotive safety surveillance platform combining NVIDIA Nemotron NIM and NVIDIA embeddings for event normalization, semantic clustering and failure lineage, explainable safety-signal analysis, historical replay, statistical surveillance methods, and GenAI-assisted investigation.",
+            "technologies": [
+              "NVIDIA Nemotron NIM",
+              "NVIDIA Embeddings",
+              "Generative AI",
+              "Semantic Clustering",
+              "Anomaly Detection",
+              "Temporal Validation",
+              "Agentic AI",
+              "Statistical Signal Detection",
+              "MLOps / Model Governance"
+            ],
+            "decisions": [
+              {
+                "decision": "Constrained GenAI agents to evidence investigation, semantic adjudication, diagnostics, and engineering-brief generation",
+                "reason": "Keep statistical detection and alert decisions measurable and auditable.",
+                "tradeoffs": []
+              },
+              {
+                "decision": "Developed a Time Machine historical-replay framework that hides future recall information at a historical cutoff",
+                "reason": "Prevent future-information leakage during historical detector evaluation.",
+                "tradeoffs": []
+              },
+              {
+                "decision": "Designed the next-generation detector-discovery architecture to combine statistical surveillance with learned ranking and temporal validation",
+                "reason": "Evaluate safety signals with measurable statistical methods and deterministic false-alert policies.",
+                "tradeoffs": []
+              }
+            ],
+            "challenges": [
+              {
+                "challenge": "Noisy customer narratives describe engineering failures in inconsistent language.",
+                "solution": "Normalized complaints into structured engineering failure events, severity indicators, and semantic signatures using NVIDIA Nemotron NIM and NVIDIA embeddings."
+              },
+              {
+                "challenge": "Differently worded complaints can represent a common engineering failure pattern.",
+                "solution": "Used semantic clustering and failure-lineage detection across vehicle systems, model years, and failure mechanisms."
+              },
+              {
+                "challenge": "Historical validation can leak future recall information and overstate detector quality.",
+                "solution": "Used historical cutoffs, detector freezes, benchmark locks, positive/control cohorts, temporal snapshots, provenance hashes, and anti-leakage checks."
+              }
+            ],
+            "metrics": [],
+            "lessons": [
+              "Used failed generalization results to identify weaknesses in hand-tuned scoring rather than optimizing the POC to a single successful demonstration.",
+              "Kept statistical detection and alert decisions measurable and auditable while using GenAI for investigation and semantic adjudication."
+            ],
+            "answerHooks": [
+              "NVIDIA NIM",
+              "Nemotron",
+              "NVIDIA embeddings",
+              "automotive AI",
+              "vehicle defects",
+              "consumer complaints",
+              "NHTSA",
+              "semantic clustering",
+              "anomaly detection",
+              "early warning",
+              "post-market surveillance",
+              "time series detection",
+              "temporal validation",
+              "historical replay",
+              "data leakage",
+              "evidence-first AI",
+              "safety-critical AI",
+              "agentic AI",
+              "statistical versus GenAI architecture",
+              "PRR",
+              "ROR",
+              "Bayesian shrinkage",
+              "EWMA",
+              "CUSUM",
+              "change-point detection",
+              "model governance",
+              "false alerts",
+              "explainable AI"
+            ],
+            "examples": [
+              {
+                "title": "Evidence-first complaint normalization and clustering",
+                "situation": "Unstructured NHTSA consumer complaints describe similar vehicle failures using different language.",
+                "approach": "Used NVIDIA Nemotron NIM and NVIDIA embeddings to normalize narratives into engineering failure events, severity indicators, and semantic signatures, then clustered related complaints into failure lineages.",
+                "relevance": [
+                  "NVIDIA NIM",
+                  "embeddings",
+                  "semantic clustering",
+                  "unstructured data",
+                  "automotive safety",
+                  "event normalization"
+                ]
+              },
+              {
+                "title": "Time Machine anti-leakage validation",
+                "situation": "Historical defect detection must be evaluated without exposing the detector to recall information that became known later.",
+                "approach": "Froze the detector at a historical cutoff, hid future recall information, replayed only data available at that date, and revealed the eventual outcome afterward.",
+                "result": "The framework was designed to prevent future-information leakage during historical replay.",
+                "relevance": [
+                  "temporal validation",
+                  "historical replay",
+                  "data leakage",
+                  "backtesting",
+                  "evaluation"
+                ]
+              },
+              {
+                "title": "Separation of statistical detection and GenAI investigation",
+                "approach": "Kept statistical detection and alert decisions measurable and auditable while constraining GenAI agents to evidence investigation, semantic adjudication, diagnostics, and engineering-brief generation.",
+                "relevance": [
+                  "agentic AI",
+                  "safety-critical AI",
+                  "deterministic alerts",
+                  "statistical detection",
+                  "governance",
+                  "explainability"
+                ]
+              }
+            ]
+          }
+        ],
+        "skills": [
+          "NVIDIA Nemotron NIM",
+          "NVIDIA Embeddings",
+          "Semantic Clustering",
+          "Anomaly Detection",
+          "Temporal Validation",
+          "Agentic AI",
+          "Statistical Signal Detection",
+          "MLOps / Model Governance",
+          "Safety-Critical AI"
+        ],
+        "facts": [
+          "Architected and developed RecallZero, an evidence-first automotive safety surveillance POC for emerging defect-pattern detection from NHTSA consumer complaints."
+        ]
+      }
+    }
+  ]
+}

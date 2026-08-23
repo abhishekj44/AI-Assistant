@@ -40,3 +40,23 @@ next-env.d.ts
 sessions/*.json
 !sessions/README.md
 sessions/README.md
+
+# locally extracted candidate knowledge (may contain personal/company information)
+/data/candidate-knowledge.json
+/data/qa-bank.json
+/data/*.tmp
+!data/qa-bank.example.json
+data/candidate-knowledge.refined.example.json
+data/qa-bank.example.json
+docs/ARCHITECTURE.md
+docs/CONTEXT_INSPECTOR.md
+docs/LATENCY_DIAGNOSTICS.md
+docs/NEXT_STEPS.md
+docs/PROJECT_EVIDENCE.md
+docs/QA_BANK.md
+docs/TYPESCRIPT_FIXES.md
+docs/VALIDATION.md
+PATCH_NOTES_V8.md
+PATCH_NOTES_V7.md
+PATCH_NOTES_V6.md
+PATCH_NOTES_V5.md

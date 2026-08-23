@@ -1,51 +1,56 @@
-/**
- * AudioWorklet processor for downsampling microphone/system audio to 16kHz Int16 linear PCM
- * for real-time streaming to Deepgram speech-to-text.
- */
 class PCMProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.targetSampleRate = 16000;
+    this.targetRate = 16000;
+    this.frameSize = 512; // 32ms at 16 kHz
+    this.output = new Int16Array(this.frameSize);
+    this.outputIndex = 0;
+    this.phase = 0;
+    this.sum = 0;
+    this.sampleCount = 0;
+    this.stopped = false;
+
+    this.port.onmessage = (event) => {
+      if (event.data?.command === "stop") {
+        this.flush();
+        this.stopped = true;
+      }
+    };
   }
 
-  process(inputs, outputs, parameters) {
-    const input = inputs[0];
-    if (!input || input.length === 0) return true;
+  emitSample(sample) {
+    const clipped = Math.max(-1, Math.min(1, sample));
+    this.output[this.outputIndex++] = clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff;
+    if (this.outputIndex >= this.frameSize) this.flush();
+  }
 
-    // Use channel 0 (mono)
-    const channelData = input[0];
-    if (!channelData || channelData.length === 0) return true;
+  flush() {
+    if (this.outputIndex === 0) return;
+    const frame = this.outputIndex === this.frameSize ? this.output : this.output.slice(0, this.outputIndex);
+    const buffer = frame.buffer;
+    this.port.postMessage({ type: "pcm_data", buffer }, [buffer]);
+    this.output = new Int16Array(this.frameSize);
+    this.outputIndex = 0;
+  }
 
-    const sourceSampleRate = sampleRate; // global sampleRate in AudioWorkletGlobalScope
+  process(inputs) {
+    if (this.stopped) return false;
+    const input = inputs[0]?.[0];
+    if (!input) return true;
 
-    if (sourceSampleRate === this.targetSampleRate) {
-      // 1:1 Int16 conversion
-      const pcm16 = new Int16Array(channelData.length);
-      for (let i = 0; i < channelData.length; i++) {
-        const s = Math.max(-1, Math.min(1, channelData[i]));
-        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      this.port.postMessage({ type: "pcm_data", buffer: pcm16.buffer }, [pcm16.buffer]);
-    } else {
-      // Linear interpolation downsampling
-      const ratio = sourceSampleRate / this.targetSampleRate;
-      const targetLength = Math.floor(channelData.length / ratio);
-      if (targetLength > 0) {
-        const pcm16 = new Int16Array(targetLength);
-        for (let i = 0; i < targetLength; i++) {
-          const sourceIdx = i * ratio;
-          const idx = Math.floor(sourceIdx);
-          const fraction = sourceIdx - idx;
-          const s0 = channelData[idx] || 0;
-          const s1 = channelData[idx + 1] || s0;
-          const interpolated = s0 + fraction * (s1 - s0);
-          const s = Math.max(-1, Math.min(1, interpolated));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        this.port.postMessage({ type: "pcm_data", buffer: pcm16.buffer }, [pcm16.buffer]);
+    // Average groups of source samples. This behaves as a simple low-pass decimator and
+    // handles common browser rates (44.1/48 kHz) without assuming an integer ratio.
+    for (let i = 0; i < input.length; i += 1) {
+      this.sum += input[i];
+      this.sampleCount += 1;
+      this.phase += this.targetRate;
+      if (this.phase >= sampleRate) {
+        this.phase -= sampleRate;
+        this.emitSample(this.sum / Math.max(1, this.sampleCount));
+        this.sum = 0;
+        this.sampleCount = 0;
       }
     }
-
     return true;
   }
 }

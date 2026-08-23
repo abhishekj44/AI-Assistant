@@ -1,48 +1,80 @@
-// Safe wrapper around pdf-parse to handle ENOENT errors
-import fs from 'fs';
-import path from 'path';
+export interface ParsedPdfText {
+  text: string;
+  numpages?: number;
+  info?: unknown;
+  metadata?: unknown;
+  version?: string;
+}
 
-// Create a dummy test file if it doesn't exist to prevent pdf-parse from crashing
-const testFilePath = path.join(process.cwd(), 'test', 'data', '05-versions-space.pdf');
+type PdfParseResult = {
+  text?: string;
+  numpages?: number;
+  info?: unknown;
+  metadata?: unknown;
+  version?: string;
+};
 
-export async function safePdfParse(buffer: Buffer): Promise<any> {
+type PdfParseFunction = (buffer: Buffer) => Promise<PdfParseResult>;
+
+let parserPromise: Promise<PdfParseFunction> | null = null;
+
+/**
+ * pdf-parse@1.x exposes a package-root debug harness that reads
+ * ./test/data/05-versions-space.pdf when some bundlers evaluate the module.
+ * Import the implementation module lazily instead so Next.js can collect
+ * route metadata without executing that debug harness during `next build`.
+ */
+async function getPdfParser(): Promise<PdfParseFunction> {
+  if (!parserPromise) {
+    parserPromise = import("pdf-parse/lib/pdf-parse.js")
+      .then((module) => {
+        const parser = module.default;
+        if (typeof parser !== "function") {
+          throw new Error("PDF parser implementation did not export a function");
+        }
+        return parser as PdfParseFunction;
+      })
+      .catch((error) => {
+        // Allow a later request to retry module loading after a transient failure.
+        parserPromise = null;
+        throw error;
+      });
+  }
+
+  return parserPromise;
+}
+
+/**
+ * Server-only PDF text extraction with stable, user-facing errors.
+ * Knowledge ingestion intentionally rejects scanned/encrypted PDFs rather than
+ * invoking OCR on the latency-sensitive application server.
+ */
+export async function safePdfParse(buffer: Buffer): Promise<ParsedPdfText> {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new Error("PDF is empty");
+  }
+
   try {
-    // Ensure test directory exists
-    const testDir = path.dirname(testFilePath);
-    if (!fs.existsSync(testDir)) {
-      fs.mkdirSync(testDir, { recursive: true });
+    const pdfParse = await getPdfParser();
+    const parsed = await pdfParse(buffer);
+
+    return {
+      text: String(parsed?.text || ""),
+      numpages: parsed?.numpages,
+      info: parsed?.info,
+      metadata: parsed?.metadata,
+      version: parsed?.version,
+    };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || "PDF parsing failed");
+
+    if (/password|encrypted|decrypt/i.test(message)) {
+      throw new Error("The PDF is encrypted. Upload an unencrypted copy for Candidate Knowledge extraction.");
     }
-    
-    // Create dummy test file if it doesn't exist
-    if (!fs.existsSync(testFilePath)) {
-      // Create a minimal PDF file content (just enough to prevent errors)
-      const dummyPdf = Buffer.from([
-        0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34, // %PDF-1.4
-        0x0A, 0x25, 0xC4, 0xE5, 0xF2, 0xE5, 0xEB, 0xA7,
-        0xF3, 0xA0, 0xD0, 0xC4, 0xC6, 0x0A, 0x34, 0x20,
-        0x30, 0x20, 0x6F, 0x62, 0x6A, 0x0A, 0x3C, 0x3C,
-        0x20, 0x2F, 0x4C, 0x65, 0x6E, 0x67, 0x74, 0x68,
-        0x20, 0x35, 0x35, 0x20, 0x2F, 0x46, 0x69, 0x6C,
-        0x74, 0x65, 0x72, 0x20, 0x2F, 0x46, 0x6C, 0x61,
-        0x74, 0x65, 0x44, 0x65, 0x63, 0x6F, 0x64, 0x65,
-        0x20, 0x3E, 0x3E, 0x0A, 0x73, 0x74, 0x72, 0x65,
-        0x61, 0x6D, 0x0A, 0x78, 0x9C, 0x33, 0x54, 0x30,
-        0x50, 0x30, 0x51, 0x30, 0x36, 0x35, 0x51, 0x48,
-        0x37, 0x36, 0x35, 0x30, 0x32, 0x51, 0x30, 0x30,
-        0x36, 0x20, 0x00, 0x00, 0x0D, 0x0A, 0x65, 0x6E,
-        0x64, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6D, 0x0A,
-        0x65, 0x6E, 0x64, 0x6F, 0x62, 0x6A, 0x0A
-      ]);
-      fs.writeFileSync(testFilePath, dummyPdf);
-      console.log('🔧 Created dummy test PDF file to prevent ENOENT errors');
+    if (/invalid|malformed|xref|pdf/i.test(message)) {
+      throw new Error(`The PDF could not be parsed: ${message.slice(0, 240)}`);
     }
 
-    // Now import pdf-parse after ensuring the test file exists
-    const pdfParse = (await import('pdf-parse')).default;
-    return await pdfParse(buffer);
-    
-  } catch (error) {
-    console.error('Error in safePdfParse:', error);
     throw error;
   }
 }

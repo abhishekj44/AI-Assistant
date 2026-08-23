@@ -1,224 +1,257 @@
-# AI Interview Copilot 🎙️🤖
+# AI Meeting Copilot
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Next.js-14-black?logo=next.js" alt="Next.js 14" />
-  <img src="https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/TailwindCSS-3.4-38B2AC?logo=tailwind-css" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/AI-Google%20Gemini-4285F4?logo=google" alt="Google Gemini" />
-  <img src="https://img.shields.io/badge/STT-Deepgram%20Nova--2-13EF93?logo=deepgram" alt="Deepgram" />
-  <img src="https://img.shields.io/badge/RAG-Pinecone%20Vector%20DB-000000?logo=pinecone" alt="Pinecone" />
-  <img src="https://img.shields.io/badge/Search-Tavily%20AI-FF6B6B" alt="Tavily" />
-</p>
+Low-latency, speaker-aware meeting/interview assistant built with Next.js, Deepgram streaming STT, a local Candidate Knowledge Pack, and pluggable LLM inference.
 
----
+## What changed from the previous architecture
 
-## 📌 Overview
+The latency-critical answer path no longer uses Pinecone, query embeddings, a question-extraction LLM, or a reranker.
 
-**AI Interview Copilot** is a high-performance, real-time telemetry and context assistant designed for technical interviews. It captures interviewer audio via browser screen/system share, performs live speech-to-text with Deepgram Nova-2, dynamically retrieves relevant context from uploaded PDF knowledge bases (via Pinecone RAG) and real-time web search (via Tavily), and streams structured, actionable answers with Google Gemini.
-
----
-
-## ✨ Key Features
-
-### 🎙️ Real-Time Audio Transcription & State Machine
-- **Deepgram Nova-2 Integration:** Real-time speech recognition capturing system/interviewer audio with millisecond latency.
-- **Zero-Polling Transcript State Machine:** Utterances are managed in an event-driven state machine that handles interim hypotheses, multi-utterance coalescing, and silence-based finalization.
-- **Multi-Part Question Resolution:** Intelligently gathers consecutive utterances from the interviewer into a unified question block so context is never lost when the speaker pauses.
-
-### ⚡ Low-Latency Gemini Streaming
-- **Real-Time Token Streaming:** Answers stream token-by-token directly into the UI with immediate Time-to-First-Token (TTFT).
-- **Multi-Model Fallback Chain:** Automatic retry with exponential backoff across fallback models to guarantee high availability during API load spikes.
-- **Concise & Structured Answers:** Prompts engineered for high-pressure interviews with bullet-pointed technical steps, trade-offs, and examples.
-
-### 📚 Hybrid RAG (Vector Search + Routed Web Search)
-- **PDF Document Ingestion:** Upload and index technical resumes, project whitepapers, or domain documents into Pinecone vector storage.
-- **768-Dim Gemini Embeddings:** Semantic search matches the interviewer's question to specific PDF snippets and page numbers.
-- **Deterministic Web Router:** Web search is gated by freshness signals (e.g., current versions, release dates, pricing), skipping redundant web lookups on standard algorithmic questions.
-- **Interactive Citation Modal:** Click any citation badge to view matching PDF context snippets and page numbers.
-
-### 🎛️ In-App Prompt & Persona Inspector
-- **Custom System Directives:** View and adjust answer rules (word count, bullet points, technical depth) on the fly without editing code.
-- **Candidate Persona & Background:** Store your tech stack, projects, and career summary; automatically injected into generation prompts.
-- **Live Prompt Preview:** Inspect the exact assembled prompt string sent to Gemini in real time.
-- **Persistent Storage:** Custom settings persist seamlessly in `localStorage`.
-
-### 🛡️ Stealth Mode & Keyboard Shortcuts
-- **Stealth Mode (`Ctrl+Shift+C`):** Minimizes the copilot into an unobtrusive icon for distraction-free interviews.
-- **Fast Keyboard Navigation:**
-  - `Ctrl + Enter`: Trigger instant answer generation.
-  - `Ctrl + C`: Switch to Copilot Mode.
-  - `Ctrl + S`: Switch to Summarizer Mode.
-
----
-
-## 🏗️ System Architecture
-
-```mermaid
-flowchart TD
-    A[Screen / System Audio Capture] -->|Web Audio Stream| B[Deepgram Nova-2 STT]
-    B -->|Live Interim & Finalized Turns| C[Transcript State Machine]
-    C -->|Coalesced Question & Turns Context| D[Copilot Dashboard]
-    
-    D -->|Click Generate Answer / Ctrl+Enter| E[POST /api/completion]
-    
-    E --> F{RAG Orchestrator}
-    F -->|Query Embedding| G[Google Gemini Embeddings]
-    G -->|Vector Similarity Search| H[(Pinecone Vector DB)]
-    F -->|Freshness Regex Gate| I{Needs Web Search?}
-    I -- Yes --> J[Tavily Web Search]
-    I -- No --> K[Skip Web Search]
-    
-    H & J --> L[Combine Context & Citations]
-    L --> M[Assembled Prompt with Persona & Turns]
-    M --> N[Google Gemini Streaming Generation]
-    
-    N -->|ReadableStream| D
-    N -->|Append ---SOURCES---| D
+```text
+System audio ──> Deepgram ──> INTERVIEWER turns ──┐
+                                                  ├─> structured conversation state
+Microphone (optional) ──> Deepgram ──> ME turns ─┘
+                                                        │
+                         rolling meeting memory <───────┤  (background only)
+                                                        │
+Resume/JD/projects ──> one-time extraction ──> Candidate Knowledge Pack
+Prepared Q&A ──> local Q&A Bank ──> top-match guidance ────────────┤
+                                                        │
+                                           Generate Answer
+                                                        │
+                                  local context selection (~in-process)
+                                                        │
+                            optional fresh-web lookup only when required
+                                                        │
+                                   Gemini / Cerebras / Groq
+                                                        │
+                                          typed SSE stream
+                                                        │
+                              TTFT + tokens/sec + total latency
 ```
 
----
+## Core design decisions
 
-## 📁 Repository Structure
+- **Optional dual-speaker transcription:** system audio is always tagged `interviewer`; microphone audio is tagged `me` only when the user enables **Capture my microphone**. Interviewer-only mode never requests microphone permission.
+- **Structured turns, not raw transcript strings:** every utterance has an ID, sequence, speaker, timestamps and confidence.
+- **Candidate Knowledge Pack:** resume/JD/project documents are converted once into compact factual structured context, including source-supported project examples and search-only answer hooks.
+- **No vector DB on the normal answer path:** local lexical selection chooses the most relevant projects/experience in milliseconds.
+- **Optional Prepared Q&A guidance:** a separate local Q&A Bank can provide high-value answer/key-point guidance; only the top matches are injected, and Candidate Knowledge remains authoritative for personal facts.
+- **Follow-up aware selection:** recent conversation, current meeting topic and entities are included in local relevance matching, so questions like “why did you choose that?” can resolve the referenced project.
+- **Background meeting memory:** every few finalized turns, a compact summary/facts/entities state is refreshed without blocking Generate Answer.
+- **Strict web routing:** Tavily is called only for explicit freshness signals such as “latest”, “today”, or “current version”.
+- **Dynamic live-answer length:** simple questions stay short, while architecture/scenario and project questions can expand to roughly 100–170 words when that improves usefulness.
+- **Provider abstraction:** Gemini is the default; Cerebras and Groq can be selected with environment variables for latency benchmarking.
+- **No retry sleeps:** only transient 429/5xx/network startup failures can fail over, and the critical path is capped at two provider/model attempts.
+- **Measured performance:** the UI displays client TTFT, server generation throughput, end-to-end latency, the actual provider/model used, and a fine-grained latency breakdown across app, model startup/prefill and generation.
+- **In-process Knowledge Pack cache:** repeated answer requests avoid re-reading/parsing an unchanged Candidate Knowledge Pack from disk.
+- **Optional Gemini Priority tier:** set `GEMINI_SERVICE_TIER=priority` to benchmark Google's lower-latency priority queue; Standard remains the default because Priority is premium-priced.
 
-```
-AI-powererd-interview-Assistant/
-├── app/
-│   ├── api/
-│   │   ├── completion/        # Streaming LLM completion & RAG dispatch
-│   │   ├── deepgram/          # STT session authentication
-│   │   ├── pdf/               # PDF upload, parsing, and vector indexing
-│   │   ├── rag/               # Vector similarity query endpoint
-│   │   └── sessions/          # Session transcript persistence
-│   ├── globals.css            # Tailwind & global design tokens
-│   ├── layout.tsx             # Root layout with dark mode
-│   └── page.tsx               # Entry page routing to interview dashboard
-├── components/
-│   ├── ui/                    # Reusable Radix UI & Tailwind components
-│   ├── ChatTranscription.tsx  # Live conversation stream view
-│   ├── copilot.tsx            # Split-view copilot dashboard & trigger bar
-│   ├── History.tsx            # Saved responses & session drawer
-│   ├── PDFManager.tsx         # Document upload & Pinecone index manager
-│   ├── PDFModal.tsx           # PDF page and context citation viewer
-│   ├── PromptModal.tsx        # System prompt, persona, and live preview modal
-│   └── recorder.tsx           # Screen/system audio capture controls
-├── lib/
-│   ├── agents/
-│   │   ├── localQuestionExtractor.ts  # Regex fallback query generator
-│   │   ├── pineconeService.ts         # Pinecone index management & vector query
-│   │   ├── ragOrchestrator.ts         # RAG pipeline & web search routing
-│   │   └── simpleWebSearchAgent.ts    # Tavily search wrapper
-│   ├── audio/
-│   │   ├── audioTransportService.ts   # Audio worklet & stream handling
-│   │   └── keyterms.ts                # Technical keywords for Deepgram boosting
-│   ├── gemini.ts              # Google GenAI SDK configuration
-│   ├── safePdfParse.ts        # Robust PDF text parser
-│   ├── sessionManager.ts      # Active session & sliding transcript manager
-│   ├── transcriptStateMachine.ts # Zero-polling utterance state machine
-│   ├── types.ts               # Shared TypeScript interfaces
-│   └── utils.ts               # Prompt templates & class merge utilities
-├── public/                    # Static UI assets
-├── scripts/
-│   ├── setup-pinecone-index.js # One-click Pinecone index creator
-│   └── verify-setup.js         # API key and environment verification
-├── package.json
-├── tailwind.config.ts
-└── tsconfig.json
-```
+## Requirements
 
----
+- Node.js 20–22
+- Chrome or Edge recommended for system-audio sharing
+- Deepgram API key with Member-or-higher permission so the server can grant short-lived browser JWTs
+- Gemini API key for the default answer model
+- Gemini API key is also currently used for one-time Knowledge Pack extraction and background meeting-memory updates
+- Optional Tavily key for current/fresh web facts
+- Optional Cerebras/Groq key if benchmarking those inference providers
 
-## 🚀 Getting Started
-
-### 1. Prerequisites
-- **Node.js** 18.17+ or 20+
-- **npm** (or yarn / pnpm)
-- API Keys for:
-  - [Google AI Studio](https://aistudio.google.com/) (`GEMINI_API_KEY`)
-  - [Deepgram](https://deepgram.com/) (`DEEPGRAM_API_KEY`)
-  - [Pinecone](https://www.pinecone.io/) (`PINECONE_API_KEY`)
-  - [Tavily AI](https://tavily.com/) (`TAVILY_API_KEY`)
-
----
-
-### 2. Installation
-
-Clone the repository and install dependencies:
+## Setup
 
 ```bash
-git clone https://github.com/abhishekj44/AI-Assistant.git
-cd AI-Assistant
+cp .env.example .env.local
 npm install
-```
-
----
-
-### 3. Configure Environment Variables
-
-Create a `.env` file in the root directory (or copy from `.env.example`):
-
-```bash
-cp .env.example .env
-```
-
-Fill in your configuration:
-
-```env
-# Audio transcription (Deepgram)
-DEEPGRAM_API_KEY="your-deepgram-api-key"
-
-# Gemini LLM & Embeddings
-GEMINI_API_KEY="your-gemini-api-key"
-GEMINI_MODEL="gemini-2.5-flash"
-
-# Vector Database (Pinecone RAG)
-PINECONE_API_KEY="your-pinecone-api-key"
-PINECONE_INDEX_NAME="interview-docs"
-
-# Real-time Web Search (Tavily)
-TAVILY_API_KEY="your-tavily-api-key"
-```
-
----
-
-### 4. Setup Pinecone Vector Index
-
-Initialize your Pinecone vector index (dimension `768`, metric `cosine`):
-
-```bash
-npm run setup-pinecone
-```
-
-Verify your environment and connectivity:
-
-```bash
 npm run verify-setup
-```
-
----
-
-### 5. Run the Development Server
-
-```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open `http://localhost:3000`.
 
----
+`package-lock.json` is intentionally regenerated by `npm install` after the dependency cleanup and SDK upgrade.
 
-## 💡 How to Use
+## Environment
 
-1. **Connect Audio:** Click **Connect** in the Audio Stream panel and select the browser tab or window where your interview/meeting is running. Make sure **"Share tab audio"** or **"Share system audio"** is checked.
-2. **Upload Reference Docs (Optional):** In the **Knowledge Base** section, upload your resume or technical reference PDFs to enable vector-augmented answers.
-3. **Configure Persona (Optional):** Click **Prompt & Persona** in the top navigation bar to adjust candidate background or custom answer guidelines.
-4. **Generate Answers:**
-   - As the interviewer speaks, the live transcript is processed in real time.
-   - When a question is asked, click **Generate Answer** (or press `Ctrl + Enter`).
-   - The structured answer will stream in immediately, accompanied by citations if relevant PDF documents were matched.
-5. **Stealth Mode:** Press `Ctrl + Shift + C` to minimize the interface during live screen sharing.
+Minimum configuration:
 
----
+```env
+DEEPGRAM_API_KEY="..."
+LLM_PROVIDER="gemini"
+GEMINI_API_KEY="..."
+GEMINI_MODEL="gemini-3.6-flash"
+GEMINI_THINKING_LEVEL="minimal"
+GEMINI_SERVICE_TIER="standard"
+```
 
-## 📜 License
+For Cerebras:
 
-This project is licensed under the **MIT License**.
+```env
+LLM_PROVIDER="cerebras"
+CEREBRAS_API_KEY="..."
+CEREBRAS_MODEL="gpt-oss-120b"
+```
+
+For Groq:
+
+```env
+LLM_PROVIDER="groq"
+GROQ_API_KEY="..."
+GROQ_MODEL="openai/gpt-oss-120b"
+```
+
+See `.env.example` for all tuning options.
+
+## First-run workflow
+
+1. Open **Candidate Knowledge Pack**.
+2. Upload your resume as `Resume / CV`, or use **Import pack** to install a refined Candidate Knowledge Pack JSON directly.
+3. Upload the target job description as `Job description`.
+4. Add important project docs/notes if the resume does not contain enough architectural detail.
+5. Optional: add a few high-value items under **Prepared Q&A Guidance**, or import a compatible JSON bank.
+6. Open **Prompt & Persona** and add only extra facts/style preferences that are not already captured in the Knowledge Pack.
+7. Click **Connect Audio**.
+8. In the browser share picker, enable system/tab audio so remote participants are captured.
+9. Optional: enable **Capture my microphone** before connecting if you want your own answers included in follow-up context.
+10. After the interviewer asks a question, click **Generate Answer** or press `Ctrl+Enter`.
+
+
+### Transcription modes
+
+- **Interviewer-only (default):** captures shared/system audio only. No microphone permission is requested.
+- **Dual-speaker (optional):** enable **Capture my microphone** before connecting. If permission is denied or microphone STT fails, the interviewer stream continues and the UI shows a non-blocking warning.
+- Deepgram browser JWT creation is independent of microphone permission. `/api/deepgram` uses `/v1/auth/grant`, so `DEEPGRAM_API_KEY` must have Member-or-higher permission.
+
+## Candidate Knowledge Pack
+
+Knowledge is stored locally on the application server in:
+
+```text
+data/candidate-knowledge.json
+```
+
+That file is git-ignored because it can contain personal/company information.
+
+The one-time extractor records:
+
+- profile/headline/strengths
+- target role/JD requirements
+- work experience
+- projects
+- technologies
+- design decisions and rationale when explicitly stated
+- challenges/solutions/results
+- metrics and achievements
+- durable factual notes
+- source-supported compact project examples
+- search-only `answerHooks` used to recognize paraphrases such as VLM / vision agent / perception worker
+
+The answer model is explicitly instructed not to invent personal facts that are absent from this pack, candidate notes or the live conversation.
+
+## Prepared Q&A Bank
+
+Prepared Q&A is optional and remains separate from Candidate Knowledge. It is stored locally at `data/qa-bank.json` and is git-ignored. Only the top local matches are passed to the model; the entire bank is never added to the prompt.
+
+Use it for high-value personal/architecture questions where you care about specific framing or key points. The model still answers unseen questions from Candidate Knowledge, live conversation and its general technical knowledge. Candidate Knowledge and Candidate Notes outrank Prepared Q&A when factual claims conflict.
+
+See `docs/QA_BANK.md` and `data/qa-bank.example.json`.
+
+## Latency telemetry
+
+The response stream uses typed Server-Sent Events:
+
+```text
+event: meta
+event: delta
+event: sources
+event: metrics
+event: done
+event: error
+```
+
+Metrics shown in the UI:
+
+- **TTFT:** browser click until first visible answer chunk
+- **Throughput:** output tokens divided by generation time; marked `~` when token usage is estimated
+- **Total:** browser click until the stream is fully consumed
+- **Model:** provider/model that served the request
+- **HTTP headers / First SSE:** whether the browser is waiting for the server before streaming starts
+- **Server pre-model:** all backend work before the LLM request begins
+- **Model connect:** time awaiting provider stream creation
+- **First chunk wait:** delay after stream creation until the provider yields its first chunk
+- **Model wait total:** model connect + first-chunk delay; the most useful indicator for queue/prefill latency
+- **Request/knowledge/Q&A/context/prompt/web phase timings**
+- **Input, cached-input, thinking and output token counts** when exposed by the provider
+- **Provider attempts, requested service tier and thinking level**
+
+The UI also labels the likely bottleneck for each request. The server continues logging one `completion.metrics` JSON object per completed request for P50/P95 analysis.
+
+## Performance tuning order
+
+1. Keep `GEMINI_THINKING_LEVEL=minimal` for the default fast path; use `low` only if quality tests justify it.
+2. Keep simple answers short; allow architecture/project answers to expand to roughly 100–170 words when a concrete example is useful.
+3. Keep `CANDIDATE_CONTEXT_MAX_CHARS` around 4,200. V8 protects the top relevant project example before dropping secondary context; do not increase the budget unless diagnostics show missing evidence.
+4. Keep web lookup disabled for non-fresh questions.
+5. First inspect **Model wait total**, input tokens and cache-hit percentage. If model wait dominates, benchmark `GEMINI_SERVICE_TIER=priority` and alternate providers.
+6. Benchmark provider/model choices using real interview questions and compare P50/P95 TTFT, tokens/sec and answer quality.
+7. Add retrieval/vector search only if the knowledge corpus becomes large enough that local selection can no longer provide accurate context.
+
+## API surface
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/completion` | streamed answer/summarization |
+| `GET/POST/PUT/DELETE /api/knowledge` | inspect/build/import/remove Candidate Knowledge |
+| `GET/POST/PUT/DELETE /api/qa-bank` | inspect/add/import/remove Prepared Q&A guidance |
+| `POST /api/memory` | asynchronous compact meeting-memory refresh |
+| `GET /api/deepgram` | short-lived browser transcription JWT |
+| `GET /api/health` | configuration/health summary |
+| `GET/POST /api/sessions` | local session persistence |
+
+## Project structure
+
+```text
+app/api/completion/        answer orchestration + SSE telemetry
+app/api/knowledge/         Candidate Knowledge Pack ingestion
+app/api/qa-bank/           Prepared Q&A persistence/import API
+app/api/memory/            background meeting-memory refresh
+app/api/deepgram/          ephemeral Deepgram credential
+components/copilot.tsx     answer UI + TTFT measurement
+components/recorder.tsx    required system audio + optional microphone capture
+lib/audio/                 PCM AudioWorklet transport
+lib/transcriptStateMachine speaker-aware turn state
+lib/knowledge/             knowledge schema + local context selection
+lib/qa/                    Q&A schema + local matching
+lib/server/                knowledge extraction + persistence
+lib/llm/                   Gemini/Cerebras/Groq provider abstraction
+public/worklets/           browser PCM downsampler
+```
+
+## Validation
+
+```bash
+npm run verify-setup
+npm run typecheck
+npm run smoke
+npm run build
+```
+
+`npm run smoke` exercises speaker/follow-up resolution, local Candidate Knowledge selection and Prepared Q&A matching without calling any external API.
+
+For actual performance evaluation, collect at least 50–100 representative questions and compare **P50/P95 TTFT, P50/P95 throughput, factual correctness, personalization accuracy and hallucination rate**. Do not select a provider from tokens/sec alone.
+
+## Deployment notes
+
+The current persistence layer intentionally uses the local filesystem because this project is being optimized first for a single-user/local or persistent-host deployment. Before horizontal/serverless scale-out, replace `lib/server/knowledgeStore.ts` and local session storage with a shared durable store (PostgreSQL/object storage/Redis as appropriate). The LLM and transcript layers are already separated from that storage implementation.
+
+## V8 evidence-aware context
+
+V8 protects the highest-value real project evidence instead of simply minimizing characters. Projects can carry search-only `answerHooks` and source-supported compact `examples`. Architecture/scenario answers dynamically expand when useful and include one relevant real project reference when the Knowledge Pack supports it.
+
+Use **Diagnostics → Context** to see the protected project, match score, selected project example, answer mode, and exact context sent to the model.
+
+See `PATCH_NOTES_V8.md` and `docs/PROJECT_EVIDENCE.md`.
+
+## V7 live-meeting optimizations
+
+V7 keeps the primary meeting screen intentionally small. Open **Knowledge & Q&A** only when managing sources, and **Diagnostics** only when inspecting context/latency. Generate Answer now uses a compact dynamic candidate-context budget and exposes the exact model context/Q&A matches through the Diagnostics drawer.
+
+See `PATCH_NOTES_V7.md` and `docs/CONTEXT_INSPECTOR.md`.

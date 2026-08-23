@@ -1,297 +1,279 @@
-/**
- * Production Transcript State Machine
- * 
- * Replaces heuristic text-deduplication, 1-second debounce, and arbitrary min-length filtering
- * with a deterministic 3-tier state machine:
- * 
- * 1. Interim Hypothesis (is_final === false):
- *    Transient preview of speech in-progress. Replaces previous interim. Never committed to history.
- * 
- * 2. Segment Buffer (is_final === true, speech_final === false):
- *    Audio range has been finalized by Deepgram. Appended to current in-flight utterance.
- * 
- * 3. Sealed Utterance (speech_final === true OR UtteranceEnd):
- *    Speaker has paused/finished thought. Seals the utterance, generates sequence ID,
- *    records audio timestamps, and notifies subscribers (UI, Storage, LLM Context).
- */
+import type { SpeakerRole, TranscriptTurn } from "@/lib/conversationTypes";
 
-export interface UtteranceSegment {
-  id: string;
-  sequenceId: number;
-  speaker: 'user' | 'system' | 'external';
-  text: string;
-  audioStart?: number;
-  audioEnd?: number;
-  confidence?: number;
-  timestamp: string;
-  isInterim: boolean;
-}
-
+export type UtteranceSegment = TranscriptTurn;
 export type TranscriptSubscriber = (utterances: UtteranceSegment[], currentInterim: string | null) => void;
 export type UtteranceCompletedSubscriber = (utterance: UtteranceSegment) => void;
 
+const MAX_IN_MEMORY_FINALIZED_TURNS = 600;
+const MAX_UI_FINALIZED_TURNS = 180;
+
+interface InFlightState {
+  segments: string[];
+  interim: string;
+  audioStart?: number;
+  audioEnd?: number;
+  confidenceSamples: number[];
+}
+
+function newInFlight(): InFlightState {
+  return { segments: [], interim: "", confidenceSamples: [] };
+}
+
+/**
+ * Speaker-aware transcript state machine. System audio and microphone use independent
+ * Deepgram streams, so each speaker requires an independent in-flight buffer.
+ */
 export class TranscriptStateMachine {
-  private sequenceCounter: number = 0;
-  private currentInterimText: string = "";
-  private inFlightSegments: string[] = [];
-  private inFlightAudioStart: number | undefined = undefined;
-  private inFlightAudioEnd: number | undefined = undefined;
-  private inFlightSpeaker: 'user' | 'system' | 'external' = 'external';
-
+  private sequenceCounter = 0;
+  private inFlight: Record<SpeakerRole, InFlightState> = {
+    interviewer: newInFlight(),
+    me: newInFlight(),
+  };
   private finalizedUtterances: UtteranceSegment[] = [];
-  private subscribers: Set<TranscriptSubscriber> = new Set();
-  private utteranceSubscribers: Set<UtteranceCompletedSubscriber> = new Set();
+  private subscribers = new Set<TranscriptSubscriber>();
+  private utteranceSubscribers = new Set<UtteranceCompletedSubscriber>();
 
-  /**
-   * Process a live transcription event from Deepgram
-   */
-  processTranscriptEvent(data: {
-    channel: {
-      alternatives: Array<{
-        transcript: string;
-        words?: Array<{ word: string; punctuated_word?: string; start: number; end: number; confidence: number }>;
-        confidence?: number;
-      }>;
-    };
-    is_final?: boolean;
-    speech_final?: boolean;
-    start?: number;
-    duration?: number;
-  }, speaker: 'user' | 'system' | 'external' = 'external') {
+  processTranscriptEvent(
+    data: {
+      channel: {
+        alternatives: Array<{
+          transcript: string;
+          words?: Array<{
+            word: string;
+            punctuated_word?: string;
+            start: number;
+            end: number;
+            confidence: number;
+          }>;
+          confidence?: number;
+        }>;
+      };
+      is_final?: boolean;
+      speech_final?: boolean;
+      start?: number;
+      duration?: number;
+    },
+    speaker: SpeakerRole,
+  ) {
     const alternative = data.channel?.alternatives?.[0];
     if (!alternative) return;
 
     const words = alternative.words || [];
-    const text = (
-      words.length > 0
-        ? words.map((w) => w.punctuated_word || w.word).join(" ")
-        : alternative.transcript
+    const text = (words.length > 0
+      ? words.map((word) => word.punctuated_word || word.word).join(" ")
+      : alternative.transcript || ""
     ).trim();
-
     if (!text) return;
 
-    const isFinal = Boolean(data.is_final);
-    const speechFinal = Boolean(data.speech_final);
-
-    // Audio timestamps
+    const state = this.inFlight[speaker];
     const audioStart = words[0]?.start ?? data.start;
-    const audioEnd = words[words.length - 1]?.end ?? (data.start !== undefined && data.duration !== undefined ? data.start + data.duration : undefined);
+    const audioEnd =
+      words[words.length - 1]?.end ??
+      (data.start !== undefined && data.duration !== undefined ? data.start + data.duration : undefined);
+    const confidence =
+      typeof alternative.confidence === "number"
+        ? alternative.confidence
+        : words.length > 0
+          ? words.reduce((sum, word) => sum + (word.confidence || 0), 0) / words.length
+          : undefined;
 
-    if (!isFinal) {
-      // 1. Transient Interim Hypothesis
-      this.currentInterimText = text;
+    if (!data.is_final) {
+      state.interim = text;
       this.notifySubscribers();
       return;
     }
 
-    // 2. Finalized Segment (is_final === true)
-    this.currentInterimText = "";
-    this.inFlightSpeaker = speaker;
-    this.inFlightSegments.push(text);
+    state.interim = "";
+    state.segments.push(text);
+    if (state.audioStart === undefined && audioStart !== undefined) state.audioStart = audioStart;
+    if (audioEnd !== undefined) state.audioEnd = audioEnd;
+    if (confidence !== undefined) state.confidenceSamples.push(confidence);
 
-    if (this.inFlightAudioStart === undefined && audioStart !== undefined) {
-      this.inFlightAudioStart = audioStart;
-    }
-    if (audioEnd !== undefined) {
-      this.inFlightAudioEnd = audioEnd;
-    }
-
-    if (speechFinal) {
-      // 3. Utterance Finalized (speech_final === true)
-      this.commitInFlightUtterance();
-    } else {
-      this.notifySubscribers();
-    }
+    if (data.speech_final) this.commitInFlightUtterance(speaker);
+    else this.notifySubscribers();
   }
 
-  /**
-   * Explicit utterance end signal (e.g. from Deepgram UtteranceEnd event or manual flush)
-   */
-  finalizeCurrentUtterance() {
-    if (this.inFlightSegments.length > 0) {
-      this.commitInFlightUtterance();
-    } else if (this.currentInterimText) {
-      // If there was only an interim text hanging on flush, commit it as a segment
-      this.inFlightSegments.push(this.currentInterimText);
-      this.currentInterimText = "";
-      this.commitInFlightUtterance();
+  /** Finalizes one Deepgram stream only; never flushes the other speaker's buffer. */
+  finalizeCurrentUtterance(speaker?: SpeakerRole) {
+    if (speaker) {
+      this.flushSpeaker(speaker);
+      return;
     }
+    this.flushSpeaker("interviewer");
+    this.flushSpeaker("me");
   }
 
-  private commitInFlightUtterance() {
-    if (this.inFlightSegments.length === 0) return;
+  private flushSpeaker(speaker: SpeakerRole) {
+    const state = this.inFlight[speaker];
+    if (state.segments.length === 0 && state.interim) {
+      state.segments.push(state.interim);
+      state.interim = "";
+    }
+    if (state.segments.length > 0) this.commitInFlightUtterance(speaker);
+  }
 
-    const fullText = this.inFlightSegments.join(" ").trim();
+  private commitInFlightUtterance(speaker: SpeakerRole) {
+    const state = this.inFlight[speaker];
+    const fullText = state.segments.join(" ").replace(/\s+/g, " ").trim();
     if (!fullText) {
-      this.inFlightSegments = [];
+      this.inFlight[speaker] = newInFlight();
       return;
     }
 
-    this.sequenceCounter++;
+    this.sequenceCounter += 1;
+    const confidence = state.confidenceSamples.length
+      ? state.confidenceSamples.reduce((sum, value) => sum + value, 0) / state.confidenceSamples.length
+      : undefined;
+
     const utterance: UtteranceSegment = {
       id: `utt_${Date.now()}_${this.sequenceCounter}`,
       sequenceId: this.sequenceCounter,
-      speaker: this.inFlightSpeaker,
+      speaker,
       text: fullText,
-      audioStart: this.inFlightAudioStart,
-      audioEnd: this.inFlightAudioEnd,
+      audioStart: state.audioStart,
+      audioEnd: state.audioEnd,
+      confidence,
       timestamp: new Date().toISOString(),
       isInterim: false,
     };
 
     this.finalizedUtterances.push(utterance);
-
-    // Reset in-flight buffer
-    this.inFlightSegments = [];
-    this.inFlightAudioStart = undefined;
-    this.inFlightAudioEnd = undefined;
-    this.currentInterimText = "";
-
-    // Notify listeners
+    if (this.finalizedUtterances.length > MAX_IN_MEMORY_FINALIZED_TURNS) {
+      this.finalizedUtterances.splice(0, this.finalizedUtterances.length - MAX_IN_MEMORY_FINALIZED_TURNS);
+    }
+    this.inFlight[speaker] = newInFlight();
     this.notifySubscribers();
-    this.utteranceSubscribers.forEach((sub) => {
+
+    for (const subscriber of this.utteranceSubscribers) {
       try {
-        sub(utterance);
-      } catch (err) {
-        console.error("Error in utterance completed subscriber:", err);
+        subscriber(utterance);
+      } catch (error) {
+        console.error("Transcript utterance subscriber failed:", error);
       }
-    });
+    }
   }
 
-  /**
-   * Subscribe to transcript state changes (for UI feed rendering)
-   */
   subscribe(subscriber: TranscriptSubscriber): () => void {
     this.subscribers.add(subscriber);
-    subscriber(this.getAllMessages(), this.currentInterimText || null);
+    subscriber(this.getAllMessages(), this.getInterimText());
     return () => this.subscribers.delete(subscriber);
   }
 
-  /**
-   * Subscribe to completed utterances (for LLM context updates, storage, etc.)
-   */
   onUtteranceCompleted(subscriber: UtteranceCompletedSubscriber): () => void {
     this.utteranceSubscribers.add(subscriber);
     return () => this.utteranceSubscribers.delete(subscriber);
   }
 
-  /**
-   * Get all messages formatted for UI display (finalized + in-flight interim preview)
-   */
   getAllMessages(): UtteranceSegment[] {
-    const list = [...this.finalizedUtterances];
-
-    // If there's an in-flight unsealed utterance or interim text, display as interim
-    const currentInFlight = this.inFlightSegments.join(" ").trim();
-    const activePreview = [currentInFlight, this.currentInterimText].filter(Boolean).join(" ").trim();
-
-    if (activePreview) {
-      list.push({
-        id: "active_preview",
-        sequenceId: this.sequenceCounter + 1,
-        speaker: this.inFlightSpeaker,
-        text: activePreview,
-        audioStart: this.inFlightAudioStart,
-        audioEnd: this.inFlightAudioEnd,
+    const messages = this.finalizedUtterances.slice(-MAX_UI_FINALIZED_TURNS);
+    for (const speaker of ["interviewer", "me"] as const) {
+      const state = this.inFlight[speaker];
+      const text = [...state.segments, state.interim].filter(Boolean).join(" ").trim();
+      if (!text) continue;
+      messages.push({
+        id: `active_preview_${speaker}`,
+        sequenceId: this.sequenceCounter + (speaker === "interviewer" ? 0.1 : 0.2),
+        speaker,
+        text,
         timestamp: new Date().toISOString(),
+        audioStart: state.audioStart,
+        audioEnd: state.audioEnd,
         isInterim: true,
       });
     }
-
-    return list;
+    return messages.sort((a, b) => a.sequenceId - b.sequenceId);
   }
 
-  /**
-   * Formatted string of all finalized text with timestamps
-   */
   getFormattedHistory(): string {
     return this.finalizedUtterances
-      .map((u) => `[${new Date(u.timestamp).toLocaleTimeString()}] ${u.text}`)
+      .map((turn) => `${turn.speaker === "me" ? "ME" : "INTERVIEWER"}: ${turn.text}`)
       .join("\n");
   }
 
-  /**
-   * Reset the transcript state (e.g. on new session or UI clear)
-   */
   reset() {
-    this.currentInterimText = "";
-    this.inFlightSegments = [];
-    this.inFlightAudioStart = undefined;
-    this.inFlightAudioEnd = undefined;
+    this.sequenceCounter = 0;
+    this.inFlight = { interviewer: newInFlight(), me: newInFlight() };
     this.finalizedUtterances = [];
     this.notifySubscribers();
   }
 
-  /**
-   * Get the last N finalized (sealed) utterances for structured LLM context.
-   */
-  getRecentFinalizedTurns(n: number = 15): UtteranceSegment[] {
-    return this.finalizedUtterances.slice(-n);
+  getRecentFinalizedTurns(n = 12): UtteranceSegment[] {
+    return this.finalizedUtterances.slice(-Math.max(1, Math.min(n, 50)));
   }
 
   /**
-   * Get the complete recent question context by coalescing consecutive recent utterances
-   * from the interviewer/speaker, including any in-flight or interim text.
-   * This prevents losing context when an interviewer pauses and Deepgram splits their thought into multiple utterances.
+   * Coalesces only the current interviewer thought. A candidate turn or a long pause
+   * forms a hard boundary, preventing unrelated historical questions from being merged.
    */
-  getLatestQuestionContext(maxTurns: number = 5, minTotalLength: number = 10): string {
-    const collected: string[] = [];
+  getLatestQuestionContext(maxTurns = 3, minTotalLength = 2, maxGapMs = 3_500): string {
+    const activeState = this.inFlight.interviewer;
+    const activeText = [...activeState.segments, activeState.interim].filter(Boolean).join(" ").trim();
+    const collected: string[] = activeText ? [activeText] : [];
+    let newerTimestamp = activeText ? Date.now() : Number.POSITIVE_INFINITY;
 
-    // Traverse finalized utterances backwards, gathering consecutive turns from the other speaker
-    for (let i = this.finalizedUtterances.length - 1; i >= 0; i--) {
-      const utt = this.finalizedUtterances[i];
-      if (utt.speaker === 'user' && collected.length > 0) {
-        // Stop once we hit a user turn (boundary between previous answer and current question)
-        break;
-      }
-      if (utt.text.trim()) {
-        collected.unshift(utt.text.trim());
-      }
-      if (collected.length >= maxTurns) {
-        break;
-      }
+    // If ME has spoken since the last interviewer turn and there is no new interviewer audio,
+    // do not silently reuse an already-answered historical question.
+    if (!activeText) {
+      const latest = this.finalizedUtterances.at(-1);
+      if (latest?.speaker === "me") return "";
     }
 
-    // Include any in-flight segments or interim text currently being spoken
-    const currentInFlight = this.inFlightSegments.join(" ").trim();
-    const activePreview = [currentInFlight, this.currentInterimText].filter(Boolean).join(" ").trim();
-    if (activePreview) {
-      collected.push(activePreview);
+    for (let i = this.finalizedUtterances.length - 1; i >= 0; i -= 1) {
+      const turn = this.finalizedUtterances[i];
+      if (turn.speaker === "me") {
+        if (collected.length > 0) break;
+        return "";
+      }
+      if (!turn.text.trim()) continue;
+
+      const turnTime = Date.parse(turn.timestamp);
+      if (Number.isFinite(newerTimestamp) && newerTimestamp !== Number.POSITIVE_INFINITY) {
+        const gap = newerTimestamp - turnTime;
+        if (gap > maxGapMs && collected.length > 0) break;
+      }
+
+      collected.unshift(turn.text.trim());
+      newerTimestamp = turnTime;
+      if (collected.length >= maxTurns) break;
     }
 
-    const fullQuestion = collected.join(" ").trim();
-    if (fullQuestion.length >= minTotalLength) {
-      return fullQuestion;
-    }
-
-    const single = this.getLatestOtherSpeakerTurn(minTotalLength);
-    return single?.text || "";
+    const question = collected.join(" ").replace(/\s+/g, " ").trim();
+    if (question.length >= minTotalLength) return question;
+    return this.getLatestInterviewerTurn(minTotalLength)?.text || "";
   }
 
-  /**
-   * Get the most recent non-trivial finalized utterance (>15 chars).
-   */
-  getLatestOtherSpeakerTurn(minLength: number = 15): UtteranceSegment | null {
-    for (let i = this.finalizedUtterances.length - 1; i >= 0; i--) {
-      const utt = this.finalizedUtterances[i];
-      if (utt.text.length >= minLength) {
-        return utt;
-      }
+  getLatestInterviewerTurn(minLength = 2): UtteranceSegment | null {
+    for (let i = this.finalizedUtterances.length - 1; i >= 0; i -= 1) {
+      const turn = this.finalizedUtterances[i];
+      if (turn.speaker === "interviewer" && turn.text.trim().length >= minLength) return turn;
     }
     return null;
   }
 
+  getLatestSequenceId(): number {
+    return this.sequenceCounter;
+  }
+
+  private getInterimText(): string | null {
+    const values = (["interviewer", "me"] as const)
+      .map((speaker) => {
+        const state = this.inFlight[speaker];
+        return [...state.segments, state.interim].filter(Boolean).join(" ").trim();
+      })
+      .filter(Boolean);
+    return values.length ? values.join("\n") : null;
+  }
 
   private notifySubscribers() {
     const messages = this.getAllMessages();
-    const interim = this.currentInterimText || (this.inFlightSegments.length > 0 ? this.inFlightSegments.join(" ") : null);
-    this.subscribers.forEach((sub) => {
+    const interim = this.getInterimText();
+    for (const subscriber of this.subscribers) {
       try {
-        sub(messages, interim);
-      } catch (err) {
-        console.error("Error in transcript subscriber:", err);
+        subscriber(messages, interim);
+      } catch (error) {
+        console.error("Transcript subscriber failed:", error);
       }
-    });
+    }
   }
 }
 

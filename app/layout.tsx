@@ -5,18 +5,15 @@ import "./globals.css";
 import { Analytics } from "@vercel/analytics/react";
 
 const inter = Inter({ subsets: ["latin"] });
-const poppins = Poppins({
+const poppins = Poppins({ 
   subsets: ["latin"],
   weight: ["300", "400", "500", "600", "700"],
   variable: "--font-poppins"
 });
 
 export const metadata: Metadata = {
-  title: "New Tab",
-  description: "Transform your technical interviews with real-time AI assistance, intelligent transcription, and context-aware responses powered by cutting-edge LLMs and RAG technology.",
-  icons: {
-    icon: "data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-  },
+  title: "AI Meeting Copilot - Real-Time Answer Assistant",
+  description: "Real-time dual-speaker transcription and context-aware answer assistance with a local Candidate Knowledge Pack and low-latency LLM streaming.",
 };
 
 export default function RootLayout({
