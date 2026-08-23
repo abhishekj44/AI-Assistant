@@ -1,227 +1,224 @@
-# AI Interview Copilot
+# AI Interview Copilot 🎙️🤖
 
 <p align="center">
-  <img src="https://img.shields.io/badge/build-passing-brightgreen" alt="Build Status" />
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
-  <img src="https://img.shields.io/badge/PRs-welcome-green" alt="PRs Welcome" />
-  <img src="https://img.shields.io/badge/AI-Gemini%203.6%20Flash-blue" alt="Gemini 3.6 Flash" />
-  <img src="https://img.shields.io/badge/Transcription-Deepgram-blueviolet" alt="Deepgram" />
+  <img src="https://img.shields.io/badge/Next.js-14-black?logo=next.js" alt="Next.js 14" />
+  <img src="https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/TailwindCSS-3.4-38B2AC?logo=tailwind-css" alt="Tailwind CSS" />
+  <img src="https://img.shields.io/badge/AI-Google%20Gemini-4285F4?logo=google" alt="Google Gemini" />
+  <img src="https://img.shields.io/badge/STT-Deepgram%20Nova--2-13EF93?logo=deepgram" alt="Deepgram" />
+  <img src="https://img.shields.io/badge/RAG-Pinecone%20Vector%20DB-000000?logo=pinecone" alt="Pinecone" />
+  <img src="https://img.shields.io/badge/Search-Tavily%20AI-FF6B6B" alt="Tavily" />
 </p>
 
 ---
 
-## Overview
+## 📌 Overview
 
-*AI Interview Copilot* is a next-generation, real-time AI-powered assistant designed to streamline and enhance the technical interview process. Built for interviewers, hiring managers, and technical recruiters, this tool leverages state-of-the-art speech-to-text, large language models (LLMs), and retrieval-augmented generation (RAG) to provide instant, context-aware support during live interviews. The Copilot transcribes interviewer audio, analyzes candidate responses, and delivers intelligent, actionable suggestions, summaries, and follow-up questions—all in a clean, professional, and minimal UI.
-
-<p align="center">
-  <img src="./public/prototype.png" alt="AI Interview Copilot Prototype" width="800" />
-  <br />
-  <em>AI Interview Copilot - Real-time transcription and AI-powered assistance</em>
-</p>
+**AI Interview Copilot** is a high-performance, real-time telemetry and context assistant designed for technical interviews. It captures interviewer audio via browser screen/system share, performs live speech-to-text with Deepgram Nova-2, dynamically retrieves relevant context from uploaded PDF knowledge bases (via Pinecone RAG) and real-time web search (via Tavily), and streams structured, actionable answers with Google Gemini.
 
 ---
 
-## Features
+## ✨ Key Features
 
-### 🎙 Real-Time Audio Transcription
-- *Deepgram Integration:* Captures and transcribes interviewer/system audio in real time using advanced speech recognition.
-- *Screen Sharing Preview:* Visual feedback for active screen/audio capture, with robust error handling and fallback logic.
-- *Speaker Labeling:* Only "Interviewer" audio is transcribed and displayed, ensuring clarity and focus.
+### 🎙️ Real-Time Audio Transcription & State Machine
+- **Deepgram Nova-2 Integration:** Real-time speech recognition capturing system/interviewer audio with millisecond latency.
+- **Zero-Polling Transcript State Machine:** Utterances are managed in an event-driven state machine that handles interim hypotheses, multi-utterance coalescing, and silence-based finalization.
+- **Multi-Part Question Resolution:** Intelligently gathers consecutive utterances from the interviewer into a unified question block so context is never lost when the speaker pauses.
 
-### 🤖 AI Reasoning & Response
-- *Gemini Integration:* Uses Gemini 3.6 Flash for interview reasoning, explanations, and follow-up questions.
-- *Intelligent Routing:* The system first checks if the LLM can answer from its own knowledge. If not, it automatically triggers RAG agents to fetch relevant context from documents, web, or company knowledge bases.
-- *Progressive Enhancement:* Users receive immediate AI responses, with additional sources and citations appended as soon as RAG completes, minimizing wait time.
+### ⚡ Low-Latency Gemini Streaming
+- **Real-Time Token Streaming:** Answers stream token-by-token directly into the UI with immediate Time-to-First-Token (TTFT).
+- **Multi-Model Fallback Chain:** Automatic retry with exponential backoff across fallback models to guarantee high availability during API load spikes.
+- **Concise & Structured Answers:** Prompts engineered for high-pressure interviews with bullet-pointed technical steps, trade-offs, and examples.
 
-### 📚 Retrieval-Augmented Generation (RAG)
-- *Contextual Search:* When the LLM needs more information, RAG agents search internal documents, PDFs, and web sources to provide accurate, context-rich answers.
-- *Citations & Sources:* All RAG-based responses include clear, structured citations for transparency and auditability.
+### 📚 Hybrid RAG (Vector Search + Routed Web Search)
+- **PDF Document Ingestion:** Upload and index technical resumes, project whitepapers, or domain documents into Pinecone vector storage.
+- **768-Dim Gemini Embeddings:** Semantic search matches the interviewer's question to specific PDF snippets and page numbers.
+- **Deterministic Web Router:** Web search is gated by freshness signals (e.g., current versions, release dates, pricing), skipping redundant web lookups on standard algorithmic questions.
+- **Interactive Citation Modal:** Click any citation badge to view matching PDF context snippets and page numbers.
 
-### 📝 Minimal, Professional UI
-- *Clean Design:* No gradients, cards, or unnecessary UI elements—just a focused, distraction-free workspace.
-- *Chat-Style Transcription:* All interviewer speech is displayed in a chat interface, with clear timestamps and speaker labels.
-- *Screen Sharing:* Prominent, resizable preview for screen/audio capture, with live status indicators.
+### 🎛️ In-App Prompt & Persona Inspector
+- **Custom System Directives:** View and adjust answer rules (word count, bullet points, technical depth) on the fly without editing code.
+- **Candidate Persona & Background:** Store your tech stack, projects, and career summary; automatically injected into generation prompts.
+- **Live Prompt Preview:** Inspect the exact assembled prompt string sent to Gemini in real time.
+- **Persistent Storage:** Custom settings persist seamlessly in `localStorage`.
 
-### 🛡 Robustness & Security
-- *Error Handling:* Graceful fallbacks for audio/video issues, API errors, and permission denials.
-- *Environment Variables:* All API keys and sensitive configs are managed via .env files.
-- *No Candidate Audio:* Only interviewer/system audio is captured, ensuring privacy and compliance.
-
----
-
-
-## 🚀 BlitzQ - Production SaaS Built on This Prototype
-
-Building on this open-source prototype, I created *BlitzQ* - a comprehensive SaaS platform that takes interview preparation to the next level.
-
-### *Ace Every Interview with BlitzQ*
-Your intelligent AI-powered interview copilot that provides real-time answers, helps you practice, and boosts your confidence. Ace every interview and land your dream job.
-
-<p align="center">
-  <img src="./public/blitzq.png" alt="BlitzQ - AI Interview Copilot SaaS" width="800" />
-  <br />
-  <em>BlitzQ - Production-ready AI interview assistance platform</em>
-</p>
-
-### *Real Interview Experience*
-<p align="center">
-  <img src="./public/interview.png" alt="BlitzQ Live Interview Session" width="800" />
-  <br />
-  <em>BlitzQ in action during a live technical interview - real-time AI suggestions and contextual help</em>
-</p>
-
-### *Practice and Examples*
-<p align="center">
-  <img src="./public/example.png" alt="BlitzQ Practice Examples" width="800" />
-  <br />
-  <em>BlitzQ's practice mode with curated interview questions and AI-generated example responses</em>
-</p>
-
-*BlitzQ Features:*
-- 🎯 *Real-time AI Assistance*: Get instant, contextual answers during live interviews
-- 📚 *Smart Knowledge Base*: Access curated technical questions and best practices
-- 🎓 *Practice Mode*: Simulate interviews with AI feedback and improvement suggestions
-- 📊 *Performance Analytics*: Track your progress and identify areas for improvement
-- 🔐 *Enterprise Security*: SOC2 compliant with end-to-end encryption
-- 🌍 *Multi-language Support*: Available in 15+ languages for global candidates
+### 🛡️ Stealth Mode & Keyboard Shortcuts
+- **Stealth Mode (`Ctrl+Shift+C`):** Minimizes the copilot into an unobtrusive icon for distraction-free interviews.
+- **Fast Keyboard Navigation:**
+  - `Ctrl + Enter`: Trigger instant answer generation.
+  - `Ctrl + C`: Switch to Copilot Mode.
+  - `Ctrl + S`: Switch to Summarizer Mode.
 
 ---
 
-
-## System Flowchart
-
+## 🏗️ System Architecture
 
 ```mermaid
 flowchart TD
-    A[Start Interview Session] --> B{Screen/Audio Capture}
-    B -->|Grant Permission| C[Deepgram Transcription]
-    C --> D[Transcript to Copilot UI]
-    D --> E{AI Knowledge Check}
-    E -- Known --> F[Gemini Immediate Response]
-    E -- Need Context --> G[RAG Agents: Docs/Web Search]
-    G --> H[Contextual Prompt to Gemini]
-    F & H --> I[Streamed Response to User]
-    H --> J[Show Citations/Sources]
-    I --> K[End/Export Transcript]
+    A[Screen / System Audio Capture] -->|Web Audio Stream| B[Deepgram Nova-2 STT]
+    B -->|Live Interim & Finalized Turns| C[Transcript State Machine]
+    C -->|Coalesced Question & Turns Context| D[Copilot Dashboard]
+    
+    D -->|Click Generate Answer / Ctrl+Enter| E[POST /api/completion]
+    
+    E --> F{RAG Orchestrator}
+    F -->|Query Embedding| G[Google Gemini Embeddings]
+    G -->|Vector Similarity Search| H[(Pinecone Vector DB)]
+    F -->|Freshness Regex Gate| I{Needs Web Search?}
+    I -- Yes --> J[Tavily Web Search]
+    I -- No --> K[Skip Web Search]
+    
+    H & J --> L[Combine Context & Citations]
+    L --> M[Assembled Prompt with Persona & Turns]
+    M --> N[Google Gemini Streaming Generation]
+    
+    N -->|ReadableStream| D
+    N -->|Append ---SOURCES---| D
 ```
 
 ---
 
+## 📁 Repository Structure
 
-## Architecture
-
-- *Frontend:* Next.js, React, Tailwind CSS
-- *Audio/Video:* Web APIs for screen/audio capture, Deepgram SDK for transcription
-- *AI/LLM:* Gemini 3.6 Flash, with intelligent routing between model knowledge and RAG
-- *RAG:* Modular agents for document, PDF, and web search (Pinecone, Tavily, etc.)
-- *Backend:* API routes for streaming LLM responses, RAG orchestration, and context management
+```
+AI-powererd-interview-Assistant/
+├── app/
+│   ├── api/
+│   │   ├── completion/        # Streaming LLM completion & RAG dispatch
+│   │   ├── deepgram/          # STT session authentication
+│   │   ├── pdf/               # PDF upload, parsing, and vector indexing
+│   │   ├── rag/               # Vector similarity query endpoint
+│   │   └── sessions/          # Session transcript persistence
+│   ├── globals.css            # Tailwind & global design tokens
+│   ├── layout.tsx             # Root layout with dark mode
+│   └── page.tsx               # Entry page routing to interview dashboard
+├── components/
+│   ├── ui/                    # Reusable Radix UI & Tailwind components
+│   ├── ChatTranscription.tsx  # Live conversation stream view
+│   ├── copilot.tsx            # Split-view copilot dashboard & trigger bar
+│   ├── History.tsx            # Saved responses & session drawer
+│   ├── PDFManager.tsx         # Document upload & Pinecone index manager
+│   ├── PDFModal.tsx           # PDF page and context citation viewer
+│   ├── PromptModal.tsx        # System prompt, persona, and live preview modal
+│   └── recorder.tsx           # Screen/system audio capture controls
+├── lib/
+│   ├── agents/
+│   │   ├── localQuestionExtractor.ts  # Regex fallback query generator
+│   │   ├── pineconeService.ts         # Pinecone index management & vector query
+│   │   ├── ragOrchestrator.ts         # RAG pipeline & web search routing
+│   │   └── simpleWebSearchAgent.ts    # Tavily search wrapper
+│   ├── audio/
+│   │   ├── audioTransportService.ts   # Audio worklet & stream handling
+│   │   └── keyterms.ts                # Technical keywords for Deepgram boosting
+│   ├── gemini.ts              # Google GenAI SDK configuration
+│   ├── safePdfParse.ts        # Robust PDF text parser
+│   ├── sessionManager.ts      # Active session & sliding transcript manager
+│   ├── transcriptStateMachine.ts # Zero-polling utterance state machine
+│   ├── types.ts               # Shared TypeScript interfaces
+│   └── utils.ts               # Prompt templates & class merge utilities
+├── public/                    # Static UI assets
+├── scripts/
+│   ├── setup-pinecone-index.js # One-click Pinecone index creator
+│   └── verify-setup.js         # API key and environment verification
+├── package.json
+├── tailwind.config.ts
+└── tsconfig.json
+```
 
 ---
 
-## Getting Started
+## 🚀 Getting Started
 
-### 1. Clone the Repository
-bash
-git clone https://github.com/Vijaysingh1621/AI-powererd-interview-Assistant.git
-cd ai-interview-copilot
+### 1. Prerequisites
+- **Node.js** 18.17+ or 20+
+- **npm** (or yarn / pnpm)
+- API Keys for:
+  - [Google AI Studio](https://aistudio.google.com/) (`GEMINI_API_KEY`)
+  - [Deepgram](https://deepgram.com/) (`DEEPGRAM_API_KEY`)
+  - [Pinecone](https://www.pinecone.io/) (`PINECONE_API_KEY`)
+  - [Tavily AI](https://tavily.com/) (`TAVILY_API_KEY`)
 
+---
 
-### 2. Install Dependencies
-bash
+### 2. Installation
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/abhishekj44/AI-Assistant.git
+cd AI-Assistant
 npm install
-# or
-yarn install
+```
 
+---
 
 ### 3. Configure Environment Variables
-Copy .env.example to .env and fill in your API keys:
-bash
+
+Create a `.env` file in the root directory (or copy from `.env.example`):
+
+```bash
 cp .env.example .env
+```
 
-- GEMINI_API_KEY (Gemini generation and embeddings)
-- NEXT_PUBLIC_DEEPGRAM_API_KEY (Deepgram)
-- PINECONE_API_KEY, TAVILY_API_KEY, etc. (for RAG)
+Fill in your configuration:
 
-### 4. Run the App
-bash
+```env
+# Audio transcription (Deepgram)
+DEEPGRAM_API_KEY="your-deepgram-api-key"
+
+# Gemini LLM & Embeddings
+GEMINI_API_KEY="your-gemini-api-key"
+GEMINI_MODEL="gemini-2.5-flash"
+
+# Vector Database (Pinecone RAG)
+PINECONE_API_KEY="your-pinecone-api-key"
+PINECONE_INDEX_NAME="interview-docs"
+
+# Real-time Web Search (Tavily)
+TAVILY_API_KEY="your-tavily-api-key"
+```
+
+---
+
+### 4. Setup Pinecone Vector Index
+
+Initialize your Pinecone vector index (dimension `768`, metric `cosine`):
+
+```bash
+npm run setup-pinecone
+```
+
+Verify your environment and connectivity:
+
+```bash
+npm run verify-setup
+```
+
+---
+
+### 5. Run the Development Server
+
+```bash
 npm run dev
-# or
-yarn dev
+```
 
-Visit [http://localhost:3000](http://localhost:3000) to use the Copilot.
-
----
-
-## Usage
-
-1. *Start Screen Sharing:* Click "Connect" to begin capturing interviewer audio and screen.
-2. *Live Transcription:* The Copilot will transcribe all interviewer speech in real time.
-3. *Ask Questions:* Type or speak interview questions; the Copilot will provide instant AI-powered suggestions and follow-ups.
-4. *Review Sources:* If the AI needs more context, sources and citations will appear after the initial response.
-5. *Export/Save:* Download or copy chat transcripts for record-keeping or feedback.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## Advanced Capabilities
+## 💡 How to Use
 
-- *Intelligent LLM Routing:* The Copilot uses a knowledge-check prompt to decide if the LLM can answer directly. If not, it triggers RAG for deeper context.
-- *Streaming Responses:* All AI and RAG responses are streamed for minimal latency.
-- *Gemini Models:* Generation uses Gemini 3.6 Flash; RAG uses 768-dimensional Gemini embeddings.
-- *Extensible RAG Agents:* Add new document or web search agents by extending the RAG orchestrator.
-
----
-
-## File Structure
-
-- /app - Next.js app, API routes, and main pages
-- /components - UI components (recorder, chat, PDF manager, etc.)
-- /lib - Core logic (transcription manager, LLM/RAG clients, utils)
-- /public - Static assets
-- /scripts - Setup and utility scripts
-- /docs - Technical and integration documentation
+1. **Connect Audio:** Click **Connect** in the Audio Stream panel and select the browser tab or window where your interview/meeting is running. Make sure **"Share tab audio"** or **"Share system audio"** is checked.
+2. **Upload Reference Docs (Optional):** In the **Knowledge Base** section, upload your resume or technical reference PDFs to enable vector-augmented answers.
+3. **Configure Persona (Optional):** Click **Prompt & Persona** in the top navigation bar to adjust candidate background or custom answer guidelines.
+4. **Generate Answers:**
+   - As the interviewer speaks, the live transcript is processed in real time.
+   - When a question is asked, click **Generate Answer** (or press `Ctrl + Enter`).
+   - The structured answer will stream in immediately, accompanied by citations if relevant PDF documents were matched.
+5. **Stealth Mode:** Press `Ctrl + Shift + C` to minimize the interface during live screen sharing.
 
 ---
 
-## Contributing
+## 📜 License
 
-1. Fork the repo and create a feature branch.
-2. Make your changes with clear, well-documented code.
-3. Add/modify tests as needed.
-4. Submit a pull request with a detailed description.
-
----
-
-## Troubleshooting
-
-- *Audio/Screen Not Captured:* Ensure browser permissions are granted for screen and audio.
-- *API Errors:* Check your .env file for correct API keys and quotas.
-- *Slow Responses:* RAG-based answers may take longer; LLM-only answers are near-instant.
-- *UI Issues:* Clear browser cache or try a different browser.
-
----
-
-## License
-
-MIT License. See [LICENSE](./LICENSE) for details.
-
----
-
-## Acknowledgments
-
-- [Deepgram](https://deepgram.com) for real-time transcription
-- [Google Gemini](https://ai.google.dev/gemini-api/docs/models) for model inference and embeddings
-- [Pinecone](https://pinecone.io) and [Tavily](https://tavily.com) for RAG/search
-- [Next.js](https://nextjs.org), [React](https://react.dev), and [Tailwind CSS](https://tailwindcss.com) for the frontend
-
----
-
-## Contact
-Author: Vijay Singh
-📧 Email: itisvijaysingh@gmail.com
-
-🔗 LinkedIn: https://www.linkedin.com/in/vijay-singh-b25483288/
-
-🔗 Repo: https://github.com/Vijaysingh1621/AI-powererd-interview-Assistant.git
-
-For support, feature requests, or enterprise solutions, please contact the maintainers or open an issue on GitHub.
+This project is licensed under the **MIT License**.

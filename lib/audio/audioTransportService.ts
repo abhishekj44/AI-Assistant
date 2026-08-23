@@ -209,8 +209,58 @@ export class AudioTransportService {
       await this.audioContext.resume();
     }
 
-    // Load AudioWorklet downsampler processor
-    await this.audioContext.audioWorklet.addModule("/worklets/pcm-processor.js");
+    // Load AudioWorklet downsampler processor with fallback
+    try {
+      await this.audioContext.audioWorklet.addModule("/worklets/pcm-processor.js");
+    } catch (workletError) {
+      console.warn("Failed to load /worklets/pcm-processor.js, using inline worklet blob:", workletError);
+      const inlineWorkletCode = `
+        class PCMProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.targetSampleRate = 16000;
+          }
+          process(inputs) {
+            const input = inputs[0];
+            if (!input || input.length === 0) return true;
+            const channelData = input[0];
+            if (!channelData || channelData.length === 0) return true;
+            const sourceSampleRate = sampleRate;
+            if (sourceSampleRate === this.targetSampleRate) {
+              const pcm16 = new Int16Array(channelData.length);
+              for (let i = 0; i < channelData.length; i++) {
+                const s = Math.max(-1, Math.min(1, channelData[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+              }
+              this.port.postMessage({ type: "pcm_data", buffer: pcm16.buffer }, [pcm16.buffer]);
+            } else {
+              const ratio = sourceSampleRate / this.targetSampleRate;
+              const targetLength = Math.floor(channelData.length / ratio);
+              if (targetLength > 0) {
+                const pcm16 = new Int16Array(targetLength);
+                for (let i = 0; i < targetLength; i++) {
+                  const sourceIdx = i * ratio;
+                  const idx = Math.floor(sourceIdx);
+                  const fraction = sourceIdx - idx;
+                  const s0 = channelData[idx] || 0;
+                  const s1 = channelData[idx + 1] || s0;
+                  const interpolated = s0 + fraction * (s1 - s0);
+                  const s = Math.max(-1, Math.min(1, interpolated));
+                  pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                }
+                this.port.postMessage({ type: "pcm_data", buffer: pcm16.buffer }, [pcm16.buffer]);
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor("pcm-processor", PCMProcessor);
+      `;
+      const blob = new Blob([inlineWorkletCode], { type: "application/javascript" });
+      const blobUrl = URL.createObjectURL(blob);
+      await this.audioContext.audioWorklet.addModule(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+    }
 
     const source = this.audioContext.createMediaStreamSource(stream);
     this.workletNode = new AudioWorkletNode(this.audioContext, "pcm-processor");
