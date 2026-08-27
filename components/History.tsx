@@ -3,7 +3,7 @@
 import { Card } from "@/components/ui/card";
 import { ContentData } from "./ui/content";
 import { HistoryData } from "@/lib/types";
-import { Clock, Trash2, History as HistoryIcon } from "lucide-react";
+import { Clock, HelpCircle, Trash2, History as HistoryIcon } from "lucide-react";
 
 interface HistoryProps {
   data: HistoryData[];
@@ -43,6 +43,14 @@ export default function History({ data: savedData, deleteData }: HistoryProps) {
                 <Trash2 className="w-3 h-3" /> Delete
               </button>
             </div>
+            {data.question && (
+              <div className="mb-3 rounded-lg border border-indigo-500/20 bg-indigo-950/30 px-3 py-2">
+                <div className="mb-0.5 flex items-center gap-1.5 text-[10px] font-semibold text-indigo-400">
+                  <HelpCircle className="h-3 w-3" /> Question
+                </div>
+                <p className="text-xs italic text-indigo-200/80">&ldquo;{data.question}&rdquo;</p>
+              </div>
+            )}
             <ContentData className="text-sm text-slate-300 leading-relaxed font-sans" contentMaxLength={200}>
               {data.data}
             </ContentData>

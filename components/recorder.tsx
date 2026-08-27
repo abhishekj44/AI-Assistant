@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 import { Activity, MicOffIcon, UserRound, Volume2, Zap } from "lucide-react";
 import { sessionManager } from "@/lib/sessionManager";
 import { transcriptStateMachine } from "@/lib/transcriptStateMachine";
+import type { SessionInfo } from "@/lib/conversationTypes";
+import { SessionInfoModal } from "@/components/SessionInfoModal";
 import {
   AudioTransportError,
   candidateAudioTransportService,
@@ -42,6 +44,8 @@ export default function RecorderTranscriber() {
   const [isPreviewMinimized, setIsPreviewMinimized] = useState(false);
   const [captureCandidateMic, setCaptureCandidateMic] = useState(false);
   const [warning, setWarning] = useState<string>("");
+  const [sessionModalOpen, setSessionModalOpen] = useState(false);
+  const pendingSessionInfoRef = useRef<SessionInfo | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stoppingRef = useRef(false);
 
@@ -130,7 +134,9 @@ export default function RecorderTranscriber() {
       }
 
       transcriptStateMachine.reset();
-      sessionManager.startSession();
+      const sessionInfo = pendingSessionInfoRef.current || undefined;
+      pendingSessionInfoRef.current = null;
+      sessionManager.startSession(sessionInfo);
       const background = localStorage.getItem("bg") || "";
       let speechContext = background;
       try {
@@ -174,8 +180,18 @@ export default function RecorderTranscriber() {
   const toggle = useCallback(async () => {
     const active = [interviewerState, candidateState].some((state) => ["CONNECTING", "CONNECTED", "STREAMING", "RECONNECTING"].includes(state));
     if (active) await stopAll();
-    else await connect();
-  }, [candidateState, connect, interviewerState, stopAll]);
+    else setSessionModalOpen(true);
+  }, [candidateState, interviewerState, stopAll]);
+
+  const handleSessionConfirm = useCallback(async (info: SessionInfo) => {
+    setSessionModalOpen(false);
+    pendingSessionInfoRef.current = info;
+    await connect();
+  }, [connect]);
+
+  const handleSessionCancel = useCallback(() => {
+    setSessionModalOpen(false);
+  }, []);
 
   const interviewerStreaming = ["CONNECTED", "STREAMING"].includes(interviewerState);
   const candidateStreaming = ["CONNECTED", "STREAMING"].includes(candidateState);
@@ -253,6 +269,12 @@ export default function RecorderTranscriber() {
           {!isPreviewMinimized && <video ref={videoRef} className="w-full h-52 object-contain bg-slate-950" muted playsInline autoPlay />}
         </div>
       )}
+
+      <SessionInfoModal
+        open={sessionModalOpen}
+        onConfirm={handleSessionConfirm}
+        onCancel={handleSessionCancel}
+      />
     </div>
   );
 }

@@ -29,3 +29,9 @@ export const EMPTY_MEETING_MEMORY: MeetingMemory = {
   openQuestions: [],
   entities: [],
 };
+
+export interface SessionInfo {
+  company: string;
+  callType: "interview" | "meeting" | "screen" | "other";
+  details: string;
+}

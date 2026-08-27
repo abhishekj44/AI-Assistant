@@ -1,4 +1,4 @@
-import type { MeetingMemory, TranscriptTurn } from "@/lib/conversationTypes";
+import type { MeetingMemory, SessionInfo, TranscriptTurn } from "@/lib/conversationTypes";
 import { EMPTY_MEETING_MEMORY } from "@/lib/conversationTypes";
 
 export interface SavedSession {
@@ -7,6 +7,7 @@ export interface SavedSession {
   endedAt?: string;
   transcripts: TranscriptTurn[];
   memory: MeetingMemory;
+  sessionInfo?: SessionInfo;
 }
 
 const STORAGE_KEY_SESSIONS = "interview_sessions_v3";
@@ -27,12 +28,13 @@ class SessionManager {
     if (typeof window !== "undefined") this.restoreActiveSession();
   }
 
-  startSession(): SavedSession {
+  startSession(info?: SessionInfo): SavedSession {
     const session: SavedSession = {
       id: `session_${Date.now()}`,
       startedAt: new Date().toISOString(),
       transcripts: [],
       memory: { ...EMPTY_MEETING_MEMORY },
+      ...(info ? { sessionInfo: info } : {}),
     };
     this.activeSession = session;
     this.turnsSinceMemoryRefresh = 0;

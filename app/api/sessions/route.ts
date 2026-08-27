@@ -64,12 +64,22 @@ export async function POST(req: Request) {
       .map((turn, index) => sanitizeTurn(turn, index))
       .filter((turn): turn is TranscriptTurn => turn !== null);
 
+    const rawInfo = session?.sessionInfo;
+    const sessionInfo = rawInfo && typeof rawInfo === "object"
+      ? {
+          company: typeof rawInfo.company === "string" ? rawInfo.company.trim().slice(0, 200) : "",
+          callType: ["interview", "meeting", "screen", "other"].includes(rawInfo.callType) ? rawInfo.callType : "interview",
+          details: typeof rawInfo.details === "string" ? rawInfo.details.trim().slice(0, 1_000) : "",
+        }
+      : undefined;
+
     const safeSession = {
       id,
       startedAt: typeof session?.startedAt === "string" ? session.startedAt : new Date().toISOString(),
       endedAt: typeof session?.endedAt === "string" ? session.endedAt : new Date().toISOString(),
       transcripts,
       memory: sanitizeMemory(session?.memory),
+      ...(sessionInfo ? { sessionInfo } : {}),
     };
 
     await fs.mkdir(SESSIONS_DIR, { recursive: true });

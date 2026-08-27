@@ -7,6 +7,7 @@ export interface HistoryData {
   createdAt: string;
   data: string;
   tag: string;
+  question?: string;
 }
 
 export interface ExtractedQuestion {

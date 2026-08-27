@@ -12,7 +12,6 @@ import {
   EyeOff,
   Globe,
   HelpCircle,
-  Save,
   Send,
   Sliders,
   Sparkles,
@@ -78,7 +77,10 @@ function parseSSEBlock(block: string): SSEMessage | null {
   }
 }
 
-function useLiveCompletion(body: { bg: string; flag: FLAGS; customRules: string }) {
+function useLiveCompletion(
+  body: { bg: string; flag: FLAGS; customRules: string },
+  onAutoSave?: (data: HistoryData) => void,
+) {
   const [completion, setCompletion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -113,6 +115,8 @@ function useLiveCompletion(body: { bg: string; flag: FLAGS; customRules: string 
     let firstVisibleTokenAt: number | null = null;
     let firstSseAt: number | null = null;
     let pendingText = "";
+    let fullGeneratedText = "";
+    let derivedQuestion = focusQuestion;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
     abortRef.current = controller;
@@ -130,6 +134,7 @@ function useLiveCompletion(body: { bg: string; flag: FLAGS; customRules: string 
 
     const enqueueText = (text: string) => {
       pendingText += text;
+      fullGeneratedText += text;
       if (flushTimer) return;
       // At most ~25 UI updates/sec. This avoids re-running ReactMarkdown for every provider chunk.
       flushTimer = setTimeout(() => {
@@ -181,7 +186,10 @@ function useLiveCompletion(body: { bg: string; flag: FLAGS; customRules: string 
             if (message.data?.message) setStreamStatus(String(message.data.message));
             break;
           case "meta":
-            if (message.data?.question) setQuestion(message.data.question);
+            if (message.data?.question) {
+              derivedQuestion = message.data.question;
+              setQuestion(message.data.question);
+            }
             setMetrics((previous) => ({ ...(previous || {}), ...message.data }));
             break;
           case "delta": {
@@ -237,6 +245,32 @@ function useLiveCompletion(body: { bg: string; flag: FLAGS; customRules: string 
         clientTotalMs: Math.round(performance.now() - requestStarted),
       }));
       setStreamStatus("");
+
+      // Auto-save generated Q&A pair on successful stream completion
+      if (fullGeneratedText.trim()) {
+        const finalAnswer = fullGeneratedText.trim();
+        const finalQuestion = derivedQuestion || focusQuestion || "";
+        const tag = body.flag === FLAGS.COPILOT ? "AI Mode" : "Summarizer";
+        const entry: HistoryData = {
+          createdAt: new Date().toISOString(),
+          data: finalAnswer,
+          tag,
+          question: finalQuestion || undefined,
+        };
+        onAutoSave?.(entry);
+
+        // Persist Q&A pair to server-side data/qa-history.json
+        fetch("/api/qa-history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: finalQuestion,
+            answer: finalAnswer,
+            tag,
+            sessionId: sessionManager.getSessionId(),
+          }),
+        }).catch((error) => console.warn("Failed to auto-persist Q&A to server", error));
+      }
     } catch (caught: any) {
       flushPendingText();
       if (caught?.name !== "AbortError") {
@@ -248,7 +282,7 @@ function useLiveCompletion(body: { bg: string; flag: FLAGS; customRules: string 
       setStreamStatus("");
       setIsLoading(false);
     }
-  }, [body, isLoading]);
+  }, [body, isLoading, onAutoSave]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -280,7 +314,6 @@ export function Copilot({ addInSavedData }: CopilotProps) {
   const [chatMessages, setChatMessages] = useState<UtteranceSegment[]>([]);
   const [hiddenBeforeSequence, setHiddenBeforeSequence] = useState(0);
   const [stealthMode, setStealthMode] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   const requestBody = { bg, flag, customRules };
@@ -295,7 +328,7 @@ export function Copilot({ addInSavedData }: CopilotProps) {
     streamStatus,
     handleSubmit,
     stop,
-  } = useLiveCompletion(requestBody);
+  } = useLiveCompletion(requestBody, addInSavedData);
 
   useEffect(() => {
     const savedBg = localStorage.getItem("bg");
@@ -333,17 +366,6 @@ export function Copilot({ addInSavedData }: CopilotProps) {
     setChatMessages(
       transcriptStateMachine.getAllMessages().filter((message) => message.isInterim || message.sequenceId > latest),
     );
-  };
-
-  const saveAnswer = () => {
-    if (!completion) return;
-    addInSavedData({
-      createdAt: new Date().toISOString(),
-      data: completion,
-      tag: flag === FLAGS.COPILOT ? "AI Mode" : "Summarizer",
-    });
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2_000);
   };
 
   const saveBackground = (value: string) => {
@@ -438,10 +460,15 @@ export function Copilot({ addInSavedData }: CopilotProps) {
             {completion ? (
               <div className="overflow-hidden rounded-xl border border-slate-800/80 bg-slate-950/70 shadow-md">
                 <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/50 px-5 py-3.5">
-                  <div className="flex items-center gap-2"><div className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-400"><Zap className="h-3.5 w-3.5" /></div><h3 className="text-sm font-semibold">Suggested Response</h3></div>
-                  <Button onClick={saveAnswer} variant="ghost" size="sm" className="h-8 px-3 text-xs text-indigo-400">
-                    {isSaved ? <><Check className="mr-1 h-3.5 w-3.5 text-emerald-400" /> Saved</> : <><Save className="mr-1 h-3.5 w-3.5" /> Save</>}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-400">
+                      <Zap className="h-3.5 w-3.5" />
+                    </div>
+                    <h3 className="text-sm font-semibold">Suggested Response</h3>
+                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400">
+                    <Check className="h-3 w-3" /> Auto-saved
+                  </span>
                 </div>
                 {isLoading ? (
                   <div className="whitespace-pre-wrap p-5 text-sm leading-relaxed text-slate-200">{completion}</div>
