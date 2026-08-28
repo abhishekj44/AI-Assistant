@@ -127,8 +127,8 @@ export default function RecorderTranscriber() {
           });
         } catch (error) {
           micWarning = isMicrophonePermissionError(error)
-            ? "Microphone permission was denied. Continuing in interviewer-only mode. Your spoken answers will not be available for follow-up context."
-            : "Microphone capture could not start. Continuing in interviewer-only mode.";
+            ? "Microphone permission was denied. Continuing in remote-audio-only mode. Your microphone audio will not be available for follow-up context."
+            : "Microphone capture could not start. Continuing in remote-audio-only mode.";
           console.warn("Optional candidate microphone unavailable; continuing without it", error);
         }
       }
@@ -138,19 +138,20 @@ export default function RecorderTranscriber() {
       pendingSessionInfoRef.current = null;
       sessionManager.startSession(sessionInfo);
       const background = localStorage.getItem("bg") || "";
-      let speechContext = background;
+      const sessionTerms = [sessionInfo?.company].filter((value): value is string => Boolean(value?.trim()));
+      let speechContext = [background, ...sessionTerms.map((term) => `[TERM] ${term}`)].filter(Boolean).join("\n");
       try {
         const knowledgeResponse = await fetch("/api/knowledge", { cache: "no-store" });
         if (knowledgeResponse.ok) {
           const knowledge = await knowledgeResponse.json();
           const keyterms = Array.isArray(knowledge?.keyterms) ? knowledge.keyterms.filter((value: unknown) => typeof value === "string") : [];
-          speechContext = `${background} ${keyterms.join(" ")}`.trim();
+          speechContext = [background, ...sessionTerms.map((term) => `[TERM] ${term}`), ...keyterms.map((term: string) => `[TERM] ${term}`)].filter(Boolean).join("\n");
         }
       } catch {
         // Knowledge hints improve transcription but must never block audio startup.
       }
 
-      // System/interviewer audio is the required stream.
+      // System/remote-participant audio is the required stream.
       await interviewerAudioTransportService.start(new MediaStream(systemAudio), speechContext);
 
       // Candidate audio is best-effort only.
@@ -160,7 +161,7 @@ export default function RecorderTranscriber() {
         } catch (error) {
           console.warn("Candidate microphone transcription failed; interviewer stream remains active", error);
           micMedia.getTracks().forEach((track: MediaStreamTrack) => track.stop());
-          micWarning = "Interviewer transcription is live, but microphone transcription could not connect. Continuing in interviewer-only mode.";
+          micWarning = "Interviewer transcription is live, but microphone transcription could not connect. Continuing in remote-audio-only mode.";
         }
       }
 
@@ -208,8 +209,8 @@ export default function RecorderTranscriber() {
                 {interviewerStreaming ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
               </div>
               <div>
-                <h4 className="text-sm font-semibold text-slate-800">Meeting transcription</h4>
-                <p className="text-xs text-slate-500">System audio = interviewer · your microphone is optional · Nova-3 PCM streaming</p>
+                <h4 className="text-sm font-semibold text-slate-800">Call transcription</h4>
+                <p className="text-xs text-slate-500">System audio = remote participant · your microphone is optional · Nova-3 PCM streaming</p>
               </div>
             </div>
 
@@ -226,14 +227,14 @@ export default function RecorderTranscriber() {
                 <span className="block text-[11px] text-slate-500">
                   {captureCandidateMic
                     ? "Dual-speaker mode: your answers are included in follow-up context."
-                    : "Interviewer-only mode: no microphone permission will be requested."}
+                    : "Remote-only mode: no microphone permission will be requested."}
                 </span>
               </label>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium">
               <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1", interviewerStreaming ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500")}>
-                <Volume2 className="w-3 h-3" /> Interviewer {interviewerStreaming ? "live" : interviewerState.toLowerCase()}
+                <Volume2 className="w-3 h-3" /> Remote {interviewerStreaming ? "live" : interviewerState.toLowerCase()}
               </span>
               <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1", candidateStreaming ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-500")}>
                 <UserRound className="w-3 h-3" /> Me {captureCandidateMic ? (candidateStreaming ? "live" : candidateState.toLowerCase()) : "disabled"}

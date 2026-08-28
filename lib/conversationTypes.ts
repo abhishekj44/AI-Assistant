@@ -1,3 +1,5 @@
+import type { CallType } from "@/lib/callTypes";
+
 export type SpeakerRole = "interviewer" | "me";
 
 export interface TranscriptTurn {
@@ -32,6 +34,6 @@ export const EMPTY_MEETING_MEMORY: MeetingMemory = {
 
 export interface SessionInfo {
   company: string;
-  callType: "interview" | "meeting" | "screen" | "other";
+  callType: CallType;
   details: string;
 }

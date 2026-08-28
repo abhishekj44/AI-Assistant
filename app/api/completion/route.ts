@@ -1,22 +1,26 @@
 import crypto from "node:crypto";
 import { FLAGS } from "@/lib/types";
-import type { MeetingMemory, SpeakerRole, TranscriptTurn } from "@/lib/conversationTypes";
+import type { MeetingMemory, SessionInfo, SpeakerRole, TranscriptTurn } from "@/lib/conversationTypes";
+import { normalizeCallType } from "@/lib/callTypes";
 import { EMPTY_MEETING_MEMORY } from "@/lib/conversationTypes";
 import { readKnowledgePackWithMeta } from "@/lib/server/knowledgeStore";
-import { selectCandidateContextWithMeta } from "@/lib/knowledge/contextSelector";
+import { EMPTY_KNOWLEDGE_PACK } from "@/lib/knowledge/types";
+import { selectCandidateContextWithMeta, type CandidateContextSelection } from "@/lib/knowledge/contextSelector";
 import { buildQAGuidance, selectQAMatches } from "@/lib/qa/qaSelector";
 import { readQABankWithMeta } from "@/lib/server/qaStore";
+import { EMPTY_QA_BANK } from "@/lib/qa/types";
 import { webSearchAgent, type WebSearchResult } from "@/lib/agents/simpleWebSearchAgent";
 import {
   buildAnswerPromptDetailed,
   buildAnswerSystemInstruction,
   buildSummarizerPrompt,
-  inferAnswerProfile,
-  SUMMARIZER_SYSTEM_INSTRUCTION,
+  buildSummarizerSystemInstruction,
 } from "@/lib/promptBuilder";
 import { createLLMStream } from "@/lib/llm/providerRouter";
 import { LLMProviderError } from "@/lib/llm/types";
 import type { CompletionContextSnapshot } from "@/lib/diagnostics/types";
+import { buildQuestionBundle, sanitizeQuestionBundle, type QuestionBundle } from "@/lib/question/questionBundle";
+import { inferAnswerProfile } from "@/lib/question/answerContract";
 
 export const runtime = "nodejs";
 
@@ -75,6 +79,14 @@ interface PreGenerationMetrics {
   projectExampleIncluded?: boolean;
   answerMode?: string;
   answerTargetWords?: string;
+  evidenceStrategy?: string;
+  questionBundleTurns?: number;
+  scenarioContextChars?: number;
+  primaryAskConfidence?: string;
+  questionAuthority?: string;
+  sessionContextChars?: number;
+  callType?: string;
+  promptTemplateId?: string;
 }
 
 function sse(event: string, data: unknown): Uint8Array {
@@ -121,6 +133,30 @@ function sanitizeMemory(value: unknown): MeetingMemory {
   };
 }
 
+function sanitizeSessionInfo(value: unknown): SessionInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const callType = normalizeCallType(raw.callType);
+  const company = typeof raw.company === "string" ? raw.company.trim().slice(0, 160) : "";
+  const details = typeof raw.details === "string" ? raw.details.trim().slice(0, 500) : "";
+  return { company, callType, details };
+}
+
+function fallbackQuestionBundle(question: string, turns: TranscriptTurn[]): QuestionBundle | null {
+  if (!question.trim()) return null;
+  const latest = [...turns].reverse().find((turn) => turn.speaker === "interviewer");
+  return {
+    primaryAsk: question.trim().slice(0, 1_400),
+    scenarioContext: "",
+    interviewerBlock: question.trim().slice(0, 5_500),
+    retrievalQuery: question.trim().slice(0, 3_600),
+    turnIds: latest ? [latest.id] : [],
+    turnCount: latest ? 1 : 0,
+    usedActiveInterim: false,
+    primaryAskConfidence: "fallback",
+  };
+}
+
 function deriveQuestion(focusQuestion: unknown, turns: TranscriptTurn[]): string {
   if (typeof focusQuestion === "string" && focusQuestion.trim().length >= 2) {
     return focusQuestion.trim().slice(0, 4_000);
@@ -131,8 +167,15 @@ function deriveQuestion(focusQuestion: unknown, turns: TranscriptTurn[]): string
   return "";
 }
 
+function questionAuthority(callType: string, confidence: QuestionBundle["primaryAskConfidence"]): string {
+  if (callType === "taking_interview") return "candidate_response";
+  if (confidence === "high") return "primary_ask";
+  if (confidence === "medium") return "ask_plus_scenario";
+  return "scenario_context";
+}
+
 function needsFreshWeb(question: string): boolean {
-  return /\b(today|currently|current\s+(?:version|price|pricing|ceo|president|release|status)|latest|recent\s+(?:news|release|update)|this\s+(?:week|month|year)|as\s+of\s+20\d{2}|released\s+(?:today|recently|this))\b/i.test(question);
+  return /\b(today|currently\s+(?:available|supported|ceo|president|version|price|pricing|released)|current\s+(?:version|price|pricing|ceo|president|release|status)|latest|recent\s+(?:news|release|update)|this\s+(?:week|month|year)|as\s+of\s+20\d{2}|released\s+(?:today|recently|this))\b/i.test(question);
 }
 
 async function searchFreshWeb(question: string): Promise<{ results: WebSearchResult[]; elapsedMs: number }> {
@@ -174,6 +217,8 @@ export async function POST(request: Request) {
     const flag = body?.flag;
     const recentTurns = sanitizeTurns(body?.recentTurns);
     const memory = sanitizeMemory(body?.memory);
+    const sessionInfo = sanitizeSessionInfo(body?.sessionInfo);
+    const callType = normalizeCallType(sessionInfo?.callType);
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId.slice(0, 200) : undefined;
     const sanitizeMs = Math.round(performance.now() - sanitizeStarted);
 
@@ -182,13 +227,14 @@ export async function POST(request: Request) {
         return Response.json({ error: "No transcript is available to summarize" }, { status: 400 });
       }
       const promptStarted = performance.now();
-      const prompt = buildSummarizerPrompt(recentTurns);
+      const prompt = buildSummarizerPrompt(recentTurns, sessionInfo);
+      const summarizerSystemInstruction = buildSummarizerSystemInstruction(sessionInfo);
       const promptBuildMs = Math.round(performance.now() - promptStarted);
       return streamToClient({
         requestId,
         requestStarted,
         prompt,
-        systemInstruction: SUMMARIZER_SYSTEM_INSTRUCTION,
+        systemInstruction: summarizerSystemInstruction,
         sessionId,
         webResults: [],
         preGenerationMetrics: {
@@ -196,7 +242,7 @@ export async function POST(request: Request) {
           sanitizeMs,
           promptBuildMs,
           promptChars: prompt.length,
-          systemInstructionChars: SUMMARIZER_SYSTEM_INSTRUCTION.length,
+          systemInstructionChars: summarizerSystemInstruction.length,
           recentTurnsCount: recentTurns.length,
         },
       });
@@ -205,53 +251,82 @@ export async function POST(request: Request) {
     if (flag !== FLAGS.COPILOT) return Response.json({ error: "Invalid request flag" }, { status: 400 });
 
     const questionStarted = performance.now();
-    const question = deriveQuestion(body?.focusQuestion, recentTurns);
-    const questionDeriveMs = Math.round(performance.now() - questionStarted);
-    if (!question) {
-      return Response.json({ error: "No finalized interviewer question is available yet" }, { status: 400 });
+    const legacyQuestion = deriveQuestion(body?.focusQuestion, recentTurns);
+    const clientBundle = sanitizeQuestionBundle(body?.questionBundle);
+    const serverBundle = buildQuestionBundle(recentTurns, { maxInterviewerTurns: 10, maxChars: 5_500, maxSpanMs: 150_000 });
+    let questionBundle = clientBundle || serverBundle || fallbackQuestionBundle(legacyQuestion, recentTurns);
+    if (clientBundle?.primaryAskConfidence === "fallback" && serverBundle && serverBundle.primaryAskConfidence !== "fallback") {
+      questionBundle = { ...clientBundle, primaryAsk: serverBundle.primaryAsk, primaryAskConfidence: serverBundle.primaryAskConfidence };
     }
+    const question = callType === "taking_interview"
+      ? (questionBundle?.interviewerBlock || legacyQuestion).slice(-1_400)
+      : (questionBundle?.primaryAsk || legacyQuestion);
+    const questionDeriveMs = Math.round(performance.now() - questionStarted);
+    if (!question || !questionBundle) {
+      return Response.json({ error: callType === "taking_interview" ? "No finalized candidate response is available yet" : "No finalized remote ask is available yet" }, { status: 400 });
+    }
+    const scenarioContext = questionBundle.scenarioContext;
+    const retrievalQuestion = questionBundle.retrievalQuery || question;
 
     const contextStarted = performance.now();
-    const knowledgePromise = (async () => {
-      const started = performance.now();
-      const result = await readKnowledgePackWithMeta();
-      return { ...result, elapsedMs: Math.round(performance.now() - started) };
-    })();
-    const qaPromise = (async () => {
-      const started = performance.now();
-      const result = await readQABankWithMeta();
-      return { ...result, elapsedMs: Math.round(performance.now() - started) };
-    })();
-    const [knowledge, qa, web] = await Promise.all([knowledgePromise, qaPromise, searchFreshWeb(question)]);
+    const useCandidateEvidence = callType !== "taking_interview";
+    const usePreparedQa = callType === "giving_interview";
+    const knowledgePromise = useCandidateEvidence
+      ? (async () => {
+          const started = performance.now();
+          const result = await readKnowledgePackWithMeta();
+          return { ...result, elapsedMs: Math.round(performance.now() - started) };
+        })()
+      : Promise.resolve({ pack: EMPTY_KNOWLEDGE_PACK, cacheHit: true, elapsedMs: 0 });
+    const qaPromise = usePreparedQa
+      ? (async () => {
+          const started = performance.now();
+          const result = await readQABankWithMeta();
+          return { ...result, elapsedMs: Math.round(performance.now() - started) };
+        })()
+      : Promise.resolve({ bank: EMPTY_QA_BANK, cacheHit: true, elapsedMs: 0 });
+    const freshQuery = [question, scenarioContext.slice(-900)].filter(Boolean).join(" ");
+    const webPromise = callType === "taking_interview" ? Promise.resolve({ results: [], elapsedMs: 0 }) : searchFreshWeb(freshQuery);
+    const [knowledge, qa, web] = await Promise.all([knowledgePromise, qaPromise, webPromise]);
     const pack = knowledge.pack;
 
+    const currentQuestionTurnIds = new Set(questionBundle.turnIds);
+    const priorTurns = recentTurns.filter((turn) => !currentQuestionTurnIds.has(turn.id));
     const selectorHint = [
       memory.currentTopic,
       ...memory.entities.slice(-8),
-      memory.summary.slice(-1_000),
-      ...recentTurns.slice(-6).map((turn) => turn.text),
-    ]
-      .filter(Boolean)
-      .join("\n");
+      memory.summary.slice(-900),
+      ...priorTurns.slice(-6).map((turn) => turn.text),
+    ].filter(Boolean).join("\n");
 
-    // Q&A selection is local and nearly free. Select it first so a strong prepared answer can reduce
-    // the candidate-context budget instead of adding more tokens on top of a full knowledge payload.
     const qaSelectorStarted = performance.now();
     const configuredQaLimit = boundedInt(process.env.QA_MATCH_LIMIT, 2, 0, 5);
     const configuredQaMinScore = boundedInt(process.env.QA_MATCH_MIN_SCORE, 8, 0, 100);
-    const qaMatches = selectQAMatches(qa.bank, question, selectorHint, configuredQaLimit, configuredQaMinScore);
+    const qaMatches = selectQAMatches(qa.bank, question, [scenarioContext, selectorHint].filter(Boolean).join("\n"), configuredQaLimit, configuredQaMinScore);
     const qaSelectionMs = Math.round(performance.now() - qaSelectorStarted);
     const qaStrongMatch = (qaMatches[0]?.score ?? 0) >= QA_STRONG_MATCH_SCORE;
-    const candidateBudgetChars = qaStrongMatch
-      ? Math.min(CANDIDATE_CONTEXT_MAX_CHARS, CANDIDATE_CONTEXT_STRONG_QA_CHARS)
-      : CANDIDATE_CONTEXT_MAX_CHARS;
+    const candidateBudgetChars = qaStrongMatch ? Math.min(CANDIDATE_CONTEXT_MAX_CHARS, CANDIDATE_CONTEXT_STRONG_QA_CHARS) : CANDIDATE_CONTEXT_MAX_CHARS;
 
     const selectorStarted = performance.now();
-    const candidateSelection = selectCandidateContextWithMeta(pack, question, selectorHint, candidateBudgetChars);
+    const candidateSelection: CandidateContextSelection = useCandidateEvidence
+      ? selectCandidateContextWithMeta(pack, retrievalQuestion, selectorHint, candidateBudgetChars)
+      : {
+          context: "",
+          rawChars: 0,
+          selectedChars: 0,
+          budgetChars: 0,
+          compressionRatio: null,
+          selectedProjectNames: [],
+          selectedExperienceLabels: [],
+          broadPersonalQuestion: false,
+          projectEvidenceRequired: false,
+          projectExampleIncluded: false,
+          selectedExampleTitles: [],
+          evidenceStrategy: "technical_core",
+        };
     const selectorMs = Math.round(performance.now() - selectorStarted);
-
     const qaGuidance = buildQAGuidance(qaMatches, QA_CONTEXT_MAX_CHARS);
-    const answerProfile = inferAnswerProfile(question, candidateSelection.projectEvidenceRequired);
+    const answerProfile = inferAnswerProfile(question, candidateSelection.projectEvidenceRequired, scenarioContext, callType);
     const contextMs = Math.round(performance.now() - contextStarted);
 
     const promptStarted = performance.now();
@@ -262,6 +337,8 @@ export async function POST(request: Request) {
       memory,
       recentTurns,
       question,
+      questionBundle,
+      sessionInfo,
       webResults: web.results,
       candidateNotesMaxChars: CANDIDATE_NOTES_MAX_CHARS,
       recentConversationMaxChars: RECENT_CONTEXT_MAX_CHARS,
@@ -272,6 +349,7 @@ export async function POST(request: Request) {
       qaMatches.length > 0,
       answerProfile,
       candidateSelection.projectEvidenceRequired,
+      sessionInfo,
     );
     const promptBuildMs = Math.round(performance.now() - promptStarted);
 
@@ -279,6 +357,16 @@ export async function POST(request: Request) {
       requestId,
       createdAt: new Date().toISOString(),
       question,
+      questionBundle: {
+        primaryAsk: questionBundle.primaryAsk,
+        scenarioContext: questionBundle.scenarioContext,
+        interviewerBlock: questionBundle.interviewerBlock,
+        retrievalQuery: questionBundle.retrievalQuery,
+        turnCount: questionBundle.turnCount,
+        usedActiveInterim: questionBundle.usedActiveInterim,
+        primaryAskConfidence: questionBundle.primaryAskConfidence,
+        authority: questionAuthority(callType, questionBundle.primaryAskConfidence),
+      },
       candidate: {
         selectedContext: candidateSelection.context,
         rawChars: candidateSelection.rawChars,
@@ -293,6 +381,7 @@ export async function POST(request: Request) {
         projectEvidenceRequired: candidateSelection.projectEvidenceRequired,
         projectExampleIncluded: candidateSelection.projectExampleIncluded,
         selectedExampleTitles: candidateSelection.selectedExampleTitles,
+        evidenceStrategy: candidateSelection.evidenceStrategy,
       },
       answerProfile,
       qna: {
@@ -314,6 +403,9 @@ export async function POST(request: Request) {
       meetingMemoryText: promptParts.memoryText,
       recentConversationText: promptParts.recentConversationText,
       candidateNotes: promptParts.candidateNotes,
+      sessionContextText: promptParts.sessionContextText,
+      promptTemplateId: promptParts.promptTemplateId,
+      callType,
       webContextText: promptParts.webContext,
       systemInstruction,
       prompt: promptParts.prompt,
@@ -363,6 +455,14 @@ export async function POST(request: Request) {
         projectExampleIncluded: candidateSelection.projectExampleIncluded,
         answerMode: answerProfile.mode,
         answerTargetWords: `${answerProfile.minWords}-${answerProfile.maxWords}`,
+        evidenceStrategy: candidateSelection.evidenceStrategy,
+        questionBundleTurns: questionBundle.turnCount,
+        scenarioContextChars: questionBundle.scenarioContext.length,
+        primaryAskConfidence: questionBundle.primaryAskConfidence,
+        questionAuthority: questionAuthority(callType, questionBundle.primaryAskConfidence),
+        sessionContextChars: promptParts.sessionContextText.length,
+        callType,
+        promptTemplateId: promptParts.promptTemplateId,
       },
       question,
       maxOutputTokens: Math.min(MAX_OUTPUT_TOKENS, answerProfile.maxOutputTokens),

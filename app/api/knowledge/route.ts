@@ -64,10 +64,15 @@ function clientView(pack: Awaited<ReturnType<typeof readKnowledgePack>>) {
     keyterms: Array.from(
       new Set([
         ...pack.skills,
-        ...pack.projects.flatMap((project) => [project.name, ...project.technologies]),
+        ...pack.projects.flatMap((project) => [
+          project.name,
+          ...project.technologies,
+          ...(project.answerHooks || []),
+          ...(project.examples || []).flatMap((example) => example.relevance || []),
+        ]),
         ...pack.sources.flatMap((source) => source.keywords || []),
       ].map((value) => value?.trim()).filter(Boolean)),
-    ).slice(0, 30),
+    ).slice(0, 40),
     sources: pack.sources.map(({ contribution: _contribution, rawExcerpt: _rawExcerpt, ...source }) => source),
   };
 }

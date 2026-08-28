@@ -1,4 +1,5 @@
 import type { SpeakerRole, TranscriptTurn } from "@/lib/conversationTypes";
+import { buildQuestionBundle, type QuestionBundle } from "@/lib/question/questionBundle";
 
 export type UtteranceSegment = TranscriptTurn;
 export type TranscriptSubscriber = (utterances: UtteranceSegment[], currentInterim: string | null) => void;
@@ -202,44 +203,25 @@ export class TranscriptStateMachine {
   }
 
   /**
-   * Coalesces only the current interviewer thought. A candidate turn or a long pause
-   * forms a hard boundary, preventing unrelated historical questions from being merged.
+   * Reconstructs the current interviewer scenario using ME as the semantic boundary. Long pauses
+   * are intentionally tolerated because real system-design questions span multiple STT utterances.
    */
-  getLatestQuestionContext(maxTurns = 3, minTotalLength = 2, maxGapMs = 3_500): string {
+  getLatestQuestionBundle(): QuestionBundle | null {
     const activeState = this.inFlight.interviewer;
     const activeText = [...activeState.segments, activeState.interim].filter(Boolean).join(" ").trim();
-    const collected: string[] = activeText ? [activeText] : [];
-    let newerTimestamp = activeText ? Date.now() : Number.POSITIVE_INFINITY;
+    return buildQuestionBundle(this.finalizedUtterances, {
+      activeInterviewerText: activeText,
+      maxInterviewerTurns: 10,
+      maxChars: 5_500,
+      maxSpanMs: 150_000,
+    });
+  }
 
-    // If ME has spoken since the last interviewer turn and there is no new interviewer audio,
-    // do not silently reuse an already-answered historical question.
-    if (!activeText) {
-      const latest = this.finalizedUtterances.at(-1);
-      if (latest?.speaker === "me") return "";
-    }
-
-    for (let i = this.finalizedUtterances.length - 1; i >= 0; i -= 1) {
-      const turn = this.finalizedUtterances[i];
-      if (turn.speaker === "me") {
-        if (collected.length > 0) break;
-        return "";
-      }
-      if (!turn.text.trim()) continue;
-
-      const turnTime = Date.parse(turn.timestamp);
-      if (Number.isFinite(newerTimestamp) && newerTimestamp !== Number.POSITIVE_INFINITY) {
-        const gap = newerTimestamp - turnTime;
-        if (gap > maxGapMs && collected.length > 0) break;
-      }
-
-      collected.unshift(turn.text.trim());
-      newerTimestamp = turnTime;
-      if (collected.length >= maxTurns) break;
-    }
-
-    const question = collected.join(" ").replace(/\s+/g, " ").trim();
-    if (question.length >= minTotalLength) return question;
-    return this.getLatestInterviewerTurn(minTotalLength)?.text || "";
+  /** Backwards-compatible accessor. Generate Answer should prefer getLatestQuestionBundle(). */
+  getLatestQuestionContext(_maxTurns = 3, minTotalLength = 2, _maxGapMs = 3_500): string {
+    const bundle = this.getLatestQuestionBundle();
+    if (bundle?.primaryAsk && bundle.primaryAsk.length >= minTotalLength) return bundle.primaryAsk;
+    return "";
   }
 
   getLatestInterviewerTurn(minLength = 2): UtteranceSegment | null {

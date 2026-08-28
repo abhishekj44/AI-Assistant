@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { MeetingMemory, SpeakerRole, TranscriptTurn } from "@/lib/conversationTypes";
+import { normalizeCallType } from "@/lib/callTypes";
 
 export const runtime = "nodejs";
 const SESSIONS_DIR = path.join(process.cwd(), "sessions");
@@ -68,7 +69,7 @@ export async function POST(req: Request) {
     const sessionInfo = rawInfo && typeof rawInfo === "object"
       ? {
           company: typeof rawInfo.company === "string" ? rawInfo.company.trim().slice(0, 200) : "",
-          callType: ["interview", "meeting", "screen", "other"].includes(rawInfo.callType) ? rawInfo.callType : "interview",
+          callType: normalizeCallType(rawInfo.callType),
           details: typeof rawInfo.details === "string" ? rawInfo.details.trim().slice(0, 1_000) : "",
         }
       : undefined;

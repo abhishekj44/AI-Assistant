@@ -107,11 +107,26 @@ function ContextTab({ context }: { context: CompletionContextSnapshot | null }) 
   if (!context) return <div className="text-sm text-slate-500">Generate an answer to capture the exact context sent to the model.</div>;
 
   const candidateSummary = `${context.candidate.selectedChars.toLocaleString()} selected / ${context.candidate.rawChars.toLocaleString()} raw chars · budget ${context.candidate.budgetChars.toLocaleString()}`;
+  const takingInterview = context.callType === "taking_interview";
+  const meeting = context.callType === "meeting";
+  const reconstructedTitle = takingInterview ? "Candidate response context" : meeting ? "Reconstructed remote ask" : "Reconstructed interviewer ask";
+  const scenarioTitle = takingInterview ? "Candidate response actually passed" : meeting ? "Remote scenario actually passed" : "Interviewer scenario actually passed";
 
   return (
     <div className="space-y-5">
-      <Section title="Current question">
-        <div className="rounded-lg border border-indigo-500/20 bg-indigo-950/30 p-3 text-sm text-indigo-100">{context.question}</div>
+      <Section title={reconstructedTitle}>
+        <div className="rounded-lg border border-indigo-500/20 bg-indigo-950/30 p-3 text-sm text-indigo-100">{context.questionBundle.primaryAsk}</div>
+        <div className="flex flex-wrap gap-1.5 text-[10px] text-slate-500">
+          {!takingInterview && <span className="rounded-full border border-slate-800 bg-slate-950 px-2 py-1">confidence: {context.questionBundle.primaryAskConfidence}</span>}
+          {context.questionBundle.authority && <span className="rounded-full border border-slate-800 bg-slate-950 px-2 py-1">authority: {context.questionBundle.authority}</span>}
+          <span className="rounded-full border border-slate-800 bg-slate-950 px-2 py-1">remote turns: {context.questionBundle.turnCount}</span>
+          <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-cyan-300">prompt: {context.promptTemplateId}</span>
+          {context.questionBundle.usedActiveInterim && <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-amber-300">active interim included</span>}
+        </div>
+      </Section>
+
+      <Section title={scenarioTitle}>
+        <CodeBlock value={context.questionBundle.scenarioContext} empty="No separate scenario context was needed." />
       </Section>
 
       <Section title="Candidate knowledge actually passed">
@@ -121,12 +136,14 @@ function ContextTab({ context }: { context: CompletionContextSnapshot | null }) 
         </div>
         <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
           <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-cyan-300">answer: {context.answerProfile.mode} · {context.answerProfile.minWords}-{context.answerProfile.maxWords} words</span>
+          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-slate-300">evidence: {context.candidate.evidenceStrategy}</span>
           {context.candidate.topProjectName && <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-emerald-300">protected project: {context.candidate.topProjectName} · score {context.candidate.topProjectScore ?? "—"}</span>}
           {context.candidate.projectExampleIncluded && <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-amber-300">project example included</span>}
         </div>
         {context.candidate.selectedExampleTitles.length > 0 && (
           <div className="mb-2 text-[11px] text-slate-500">Selected example: <span className="text-slate-300">{context.candidate.selectedExampleTitles.join(" · ")}</span></div>
         )}
+        <div className="mb-2 text-[11px] text-slate-500">Answer sequence: <span className="text-slate-300">{context.answerProfile.responseSequence.join(" → ")}</span></div>
         {(context.candidate.selectedProjects.length > 0 || context.candidate.selectedExperience.length > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
             {context.candidate.selectedProjects.map((name) => <span key={`project-${name}`} className="rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-1 text-indigo-300">project: {name}</span>)}
@@ -134,6 +151,10 @@ function ContextTab({ context }: { context: CompletionContextSnapshot | null }) 
           </div>
         )}
         <CodeBlock value={context.candidate.selectedContext} />
+      </Section>
+
+      <Section title="Session context actually passed">
+        <CodeBlock value={context.sessionContextText} empty="No session metadata was included." />
       </Section>
 
       <Section title="Recent conversation actually passed">
@@ -156,7 +177,10 @@ function ContextTab({ context }: { context: CompletionContextSnapshot | null }) 
 }
 
 function QnaTab({ context }: { context: CompletionContextSnapshot | null }) {
-  if (!context) return <div className="text-sm text-slate-500">Generate an answer to see Q&A matches.</div>;
+  if (!context) return <div className="text-sm text-slate-500">Generate a response to see Q&A matches.</div>;
+  if (context.callType !== "giving_interview") {
+    return <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-500">Prepared Q&A is intentionally disabled for this call type. It is only used in Giving Interview mode.</div>;
+  }
   if (context.qna.matches.length === 0) {
     return (
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-500">
@@ -234,6 +258,14 @@ function MetricsTab({ metrics }: { metrics: CompletionMetrics | null }) {
         <Metric label="Top project" value={metrics.topProjectName ? `${metrics.topProjectName}${metrics.topProjectScore != null ? ` (${metrics.topProjectScore})` : ""}` : "—"} />
         <Metric label="Project example" value={metrics.projectExampleIncluded ? "included" : metrics.projectEvidenceRequired ? "no example available" : "not required"} />
         <Metric label="Answer mode" value={metrics.answerMode ? `${metrics.answerMode}${metrics.answerTargetWords ? ` · ${metrics.answerTargetWords} words` : ""}` : "—"} />
+        <Metric label="Evidence strategy" value={metrics.evidenceStrategy || "—"} />
+        <Metric label="Question turns" value={metrics.questionBundleTurns != null ? String(metrics.questionBundleTurns) : "—"} />
+        <Metric label="Question authority" value={metrics.questionAuthority || "—"} />
+        <Metric label="Call type" value={metrics.callType || "—"} />
+        <Metric label="Prompt template" value={metrics.promptTemplateId || "—"} />
+        <Metric label="Scenario chars" value={metrics.scenarioContextChars?.toLocaleString() || "—"} />
+        <Metric label="Ask confidence" value={metrics.primaryAskConfidence || "—"} />
+        <Metric label="Session context" value={metrics.sessionContextChars?.toLocaleString() || "—"} />
         <Metric label="Recent context" value={metrics.recentContextChars?.toLocaleString() || "—"} />
         <Metric label="Q&A matches" value={metrics.qaMatches != null ? `${metrics.qaMatches}/${metrics.qaBankEntries ?? 0}` : "—"} />
         <Metric label="Q&A select" value={formatMs(metrics.qaSelectionMs)} />

@@ -8,7 +8,10 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const ts = require("typescript");
 
+const moduleCache = new Map();
+
 function loadPureTsModule(file) {
+  if (moduleCache.has(file)) return moduleCache.get(file);
   const source = fs.readFileSync(file, "utf8");
   const output = ts.transpileModule(source, {
     compilerOptions: {
@@ -20,16 +23,28 @@ function loadPureTsModule(file) {
   }).outputText;
 
   const module = { exports: {} };
+  moduleCache.set(file, module.exports);
+  const localRequire = (id) => {
+    if (id === "clsx") return { clsx: (...values) => values.filter(Boolean).join(" ") };
+    if (id === "tailwind-merge") return { twMerge: (value) => value };
+    if (!id.startsWith("@/")) return require(id);
+    const base = id.slice(2);
+    for (const candidate of [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) {
+      if (fs.existsSync(candidate)) return loadPureTsModule(candidate);
+    }
+    throw new Error(`Unable to resolve local smoke-test module ${id}`);
+  };
   const sandbox = {
     module,
     exports: module.exports,
-    require,
+    require: localRequire,
     console,
     Date,
     setTimeout,
     clearTimeout,
   };
   vm.runInNewContext(output, sandbox, { filename: file });
+  moduleCache.set(file, module.exports);
   return module.exports;
 }
 
@@ -137,6 +152,8 @@ function contextSelectorTest() {
   assert(vlm.projectEvidenceRequired === true, "Architecture scenario did not require real project evidence");
   assert(vlm.projectExampleIncluded === true, "Relevant project example was not included");
   assert(vlm.context.includes("Hybrid perception plus multimodal reasoning"), "Protected project example was dropped from context");
+  assert(!vlm.context.includes('"RAG"'), "Project capsule leaked unrelated global skills into the model context");
+  assert(vlm.evidenceStrategy === "project_capsule", "Strong VLM match did not use the compact project evidence capsule");
   assert(vlm.context.length <= 4_200, "Protected VLM context exceeded its budget");
 }
 
@@ -192,11 +209,154 @@ function qaSelectorTest() {
   assert(guidance.length <= 1_200, "Q&A guidance exceeded its bounded test budget unexpectedly");
 }
 
+function questionBundleTest() {
+  const { buildQuestionBundle } = loadPureTsModule("lib/question/questionBundle.ts");
+  const base = Date.parse("2026-08-27T10:00:00.000Z");
+  const texts = [
+    "My VLM sees a satellite image containing 20 vehicles but reports only seven.",
+    "The semantic reasoning is correct: highway, parking lot, buildings and commercial zone.",
+    "The problem is the final vehicle count. What will you do in that situation so I get the correct count of 20 instead of seven?",
+    "Consider this as a customer project. I already have the VLM model and data.",
+    "You are the engineer and can apply whatever approach is needed to solve the problem.",
+  ];
+  const turns = texts.map((text, index) => ({ id: `q${index}`, speaker: "interviewer", text, timestamp: new Date(base + index * 8_000).toISOString() }));
+  const bundle = buildQuestionBundle(turns, { maxInterviewerTurns: 10, maxChars: 5_500, maxSpanMs: 150_000 });
+  assert(bundle && bundle.interviewerBlock.includes("20 vehicles"), "Long interviewer scenario lost the original counting constraint");
+  assert(bundle && /correct count|what will you do/i.test(bundle.primaryAsk), "QuestionBundle did not recover the actual ask");
+  assert(bundle && bundle.turnCount === 5, "QuestionBundle incorrectly split the scenario on pauses");
+}
+
+function answerContractTest() {
+  const { inferAnswerProfile } = loadPureTsModule("lib/question/answerContract.ts");
+  const profile = inferAnswerProfile(
+    "What will you do in that situation so I get the correct count?",
+    true,
+    "Customer already has a VLM. Semantic reasoning is correct but 20 vehicles are undercounted as seven.",
+  );
+  assert(profile.mode === "troubleshooting_architecture", "Scenario failure was not classified as troubleshooting architecture");
+  assert(profile.needsDiagnosis && profile.needsValidation && profile.needsTradeoff, "Answer contract omitted required clarity stages");
+}
+
+
+function promptContractTest() {
+  const { buildAnswerSystemInstruction, buildAnswerPromptDetailed } = loadPureTsModule("lib/promptBuilder.ts");
+  const { inferAnswerProfile } = loadPureTsModule("lib/question/answerContract.ts");
+  const profile = inferAnswerProfile(
+    "What will you do so the vehicle count is correct?",
+    true,
+    "Customer has a VLM; semantic reasoning is correct but it undercounts 20 vehicles as seven.",
+  );
+  const system = buildAnswerSystemInstruction(
+    "- Prefer concise bullets when useful.",
+    false,
+    profile,
+    true,
+    { company: "Example Corp", callType: "giving_interview", details: "Lead AI Engineer - Round 1" },
+  );
+  assert(system.includes("IMMUTABLE CORE QUALITY RULES"), "User style preferences replaced the immutable quality rules");
+  assert(system.includes("validation/success criteria"), "Core validation requirement is missing from the system instruction");
+  assert(system.includes("Prefer concise bullets"), "Optional user style preferences were not appended");
+  assert(system.includes("senior-engineer/professional depth"), "Giving Interview prompt did not influence answer depth");
+  assert(system.includes("failure diagnosis") && system.includes("trade-off"), "AnswerContract sequence is missing from the system instruction");
+
+  const prompt = buildAnswerPromptDetailed({
+    candidateContext: '{"protectedProjectEvidence":{"name":"Vision Satellite"}}',
+    recentTurns: [
+      { id: "prior", sequenceId: 1, speaker: "me", text: "Earlier answer", timestamp: new Date().toISOString(), isInterim: false },
+      { id: "current", sequenceId: 2, speaker: "interviewer", text: "What will you do so the vehicle count is correct?", timestamp: new Date().toISOString(), isInterim: false },
+    ],
+    question: "What will you do so the vehicle count is correct?",
+    questionBundle: {
+      primaryAsk: "What will you do so the vehicle count is correct?",
+      scenarioContext: "Customer has a VLM that understands the scene but undercounts 20 vehicles as seven.",
+      interviewerBlock: "Customer has a VLM... What will you do so the vehicle count is correct?",
+      retrievalQuery: "vehicle count VLM undercount",
+      turnIds: ["current"],
+      turnCount: 1,
+      usedActiveInterim: false,
+      primaryAskConfidence: "high",
+    },
+    sessionInfo: { company: "Example Corp", callType: "giving_interview", details: "Lead AI Engineer - Round 1" },
+    answerProfile: profile,
+  });
+  assert(prompt.prompt.includes("<SESSION_CONTEXT_DATA>"), "SessionInfo was not injected into the model prompt");
+  assert(prompt.prompt.includes("<INTERVIEWER_SCENARIO_DATA>"), "Scenario context was not injected into the model prompt");
+  assert(prompt.prompt.includes("<CURRENT_INTERVIEWER_ASK confidence=\"high\">"), "Primary ask/confidence was not separated in the model prompt");
+  assert(!prompt.recentConversationText.includes("vehicle count is correct"), "Current scenario was duplicated into recent conversation context");
+}
+
+function callTypePromptTest() {
+  const { getCallPromptTemplate } = loadPureTsModule("lib/prompts/index.ts");
+  const { inferAnswerProfile } = loadPureTsModule("lib/question/answerContract.ts");
+  const { buildAnswerPromptDetailed, buildAnswerSystemInstruction } = loadPureTsModule("lib/promptBuilder.ts");
+  const { normalizeCallType } = loadPureTsModule("lib/callTypes.ts");
+
+  assert(normalizeCallType("interview") === "giving_interview", "Legacy interview call type did not migrate");
+  assert(getCallPromptTemplate({ callType: "giving_interview" }).id === "giving-interview-v10", "Giving Interview prompt registry mismatch");
+  assert(getCallPromptTemplate({ callType: "taking_interview" }).id === "taking-interview-v10", "Taking Interview prompt registry mismatch");
+  assert(getCallPromptTemplate({ callType: "meeting" }).id === "meeting-v10", "Meeting prompt registry mismatch");
+
+  const fallbackBundle = {
+    primaryAsk: "I worked on a RAG system.",
+    scenarioContext: "",
+    interviewerBlock: "I worked on a RAG system with reranking and evaluation, but the latency was high.",
+    retrievalQuery: "RAG reranking evaluation latency",
+    turnIds: ["candidate1"],
+    turnCount: 1,
+    usedActiveInterim: false,
+    primaryAskConfidence: "fallback",
+  };
+  const takingProfile = inferAnswerProfile(fallbackBundle.primaryAsk, false, fallbackBundle.scenarioContext, "taking_interview");
+  assert(takingProfile.mode === "interviewer_followup", "Taking Interview did not select interviewer follow-up contract");
+  const takingPrompt = buildAnswerPromptDetailed({
+    candidateContext: '{"shouldNotAppear":true}',
+    background: "private candidate persona should not enter interviewer mode",
+    recentTurns: [],
+    question: fallbackBundle.primaryAsk,
+    questionBundle: fallbackBundle,
+    sessionInfo: { company: "Example Corp", callType: "taking_interview", details: "Senior AI interview" },
+    answerProfile: takingProfile,
+  });
+  assert(takingPrompt.prompt.includes("<CANDIDATE_RESPONSE_DATA>"), "Taking Interview did not pass candidate response data");
+  assert(!takingPrompt.prompt.includes("shouldNotAppear"), "Taking Interview leaked local candidate evidence");
+  assert(!takingPrompt.prompt.includes("private candidate persona"), "Taking Interview leaked local persona notes");
+  const takingSystem = buildAnswerSystemInstruction("", false, takingProfile, false, { company: "Example Corp", callType: "taking_interview", details: "Senior AI interview" });
+  assert(takingSystem.includes("Do not answer the candidate's question for them"), "Taking Interview prompt rules are missing");
+
+  const meetingProfile = inferAnswerProfile("Can we change the rollout plan?", false, "Production risk is high", "meeting");
+  const meetingPrompt = buildAnswerPromptDetailed({
+    candidateContext: "{}",
+    recentTurns: [],
+    question: "Can we change the rollout plan?",
+    questionBundle: { ...fallbackBundle, primaryAsk: "Can we change the rollout plan?", scenarioContext: "Production risk is high", primaryAskConfidence: "medium" },
+    sessionInfo: { company: "Example Corp", callType: "meeting", details: "Architecture review" },
+    answerProfile: meetingProfile,
+  });
+  assert(meetingPrompt.prompt.includes("<CURRENT_REMOTE_ASK confidence=\"medium\">"), "Meeting prompt did not carry confidence-aware remote ask");
+  const givingSystem = buildAnswerSystemInstruction("", false, inferAnswerProfile("How would you design this?", false, "", "giving_interview"), false, { company: "Example Corp", callType: "giving_interview", details: "Interview" });
+  assert(givingSystem.includes("fallback: treat INTERVIEWER_SCENARIO_DATA as authoritative"), "Fallback confidence policy is not operational in Giving Interview prompt");
+}
+
+function keytermTest() {
+  const { getCombinedKeyterms } = loadPureTsModule("lib/audio/keyterms.ts");
+  const terms = getCombinedKeyterms("[TERM] YOLOv8\n[TERM] NVIDIA Nemotron\nLead AI Engineer working with VLM and vLLM");
+  assert(terms.includes("YOLOv8"), "YOLOv8 was not preserved as an STT keyterm");
+  assert(terms.some((term) => /nemotron/i.test(term)), "Nemotron was not prioritized as an STT keyterm");
+  assert(terms.includes("VLM") && terms.includes("vLLM"), "VLM/vLLM terminology hints are missing");
+  const overloaded = getCombinedKeyterms(Array.from({ length: 30 }, (_, index) => `[TERM] custom-${index}`).join("\n"));
+  assert(overloaded.includes("VLM") && overloaded.includes("YOLOv8") && overloaded.includes("Nemotron"), "Session vocabulary crowded out mandatory high-value STT terms");
+}
+
 try {
   transcriptStateMachineTest();
   contextSelectorTest();
   qaSelectorTest();
-  console.log("Smoke tests passed: transcript focus/follow-up + local knowledge + Q&A selection");
+  questionBundleTest();
+  answerContractTest();
+  promptContractTest();
+  callTypePromptTest();
+  keytermTest();
+  console.log("Smoke tests passed: QuestionBundle + confidence policy + call-type prompts + AnswerContract + Evidence Capsule + Q&A + SessionInfo + STT terminology");
 } catch (error) {
   console.error("Smoke test failed:", error);
   process.exit(1);

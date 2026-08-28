@@ -1,4 +1,5 @@
 import type { MeetingMemory, SessionInfo, TranscriptTurn } from "@/lib/conversationTypes";
+import { normalizeCallType } from "@/lib/callTypes";
 import { EMPTY_MEETING_MEMORY } from "@/lib/conversationTypes";
 
 export interface SavedSession {
@@ -16,6 +17,7 @@ const MEMORY_REFRESH_EVERY_TURNS = 8;
 const MAX_LOCAL_SESSIONS = 6;
 const MAX_TURNS_PER_LOCAL_SESSION = 600;
 const LOCAL_PERSIST_DEBOUNCE_MS = 750;
+export const SESSION_INFO_EVENT = "meeting-copilot-session-info";
 
 class SessionManager {
   private activeSession: SavedSession | null = null;
@@ -29,12 +31,13 @@ class SessionManager {
   }
 
   startSession(info?: SessionInfo): SavedSession {
+    const normalizedInfo = info ? { ...info, callType: normalizeCallType(info.callType) } : undefined;
     const session: SavedSession = {
       id: `session_${Date.now()}`,
       startedAt: new Date().toISOString(),
       transcripts: [],
       memory: { ...EMPTY_MEETING_MEMORY },
-      ...(info ? { sessionInfo: info } : {}),
+      ...(normalizedInfo ? { sessionInfo: normalizedInfo } : {}),
     };
     this.activeSession = session;
     this.turnsSinceMemoryRefresh = 0;
@@ -42,6 +45,7 @@ class SessionManager {
     this.saveToStorage();
     if (typeof window !== "undefined") {
       try { localStorage.setItem(STORAGE_KEY_ACTIVE_ID, session.id); } catch { /* non-fatal */ }
+      window.dispatchEvent(new CustomEvent(SESSION_INFO_EVENT, { detail: session.sessionInfo }));
     }
     return session;
   }
@@ -73,6 +77,7 @@ class SessionManager {
     this.memoryRetryAfter = 0;
     if (typeof window !== "undefined") {
       try { localStorage.removeItem(STORAGE_KEY_ACTIVE_ID); } catch { /* non-fatal */ }
+      window.dispatchEvent(new CustomEvent(SESSION_INFO_EVENT, { detail: undefined }));
     }
   }
 
@@ -90,6 +95,15 @@ class SessionManager {
 
   getSessionId(): string | undefined {
     return this.activeSession?.id;
+  }
+
+  /**
+   * Returns the active session metadata used to tune completion depth/context.
+   * Return a copy so UI/request code cannot mutate persisted session state accidentally.
+   */
+  getSessionInfo(): SessionInfo | undefined {
+    const info = this.activeSession?.sessionInfo;
+    return info ? { ...info, callType: normalizeCallType(info.callType) } : undefined;
   }
 
   getFullTranscriptString(): string {
@@ -133,6 +147,7 @@ class SessionManager {
         body: JSON.stringify({
           previousMemory: this.activeSession.memory,
           turns: this.activeSession.transcripts.slice(-24),
+          sessionInfo: this.activeSession.sessionInfo,
         }),
       });
       if (!response.ok) {
@@ -204,6 +219,7 @@ class SessionManager {
       if (found) {
         found.memory ||= { ...EMPTY_MEETING_MEMORY };
         found.transcripts = (found.transcripts || []).slice(-MAX_TURNS_PER_LOCAL_SESSION);
+        if (found.sessionInfo) found.sessionInfo = { ...found.sessionInfo, callType: normalizeCallType(found.sessionInfo.callType) };
         this.activeSession = found;
         this.turnsSinceMemoryRefresh = 0;
         this.memoryRetryAfter = 0;

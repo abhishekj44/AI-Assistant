@@ -1,37 +1,37 @@
-/**
- * Technical Keyterms Dictionary & Extractor for Deepgram Nova-3
- * Formats terms cleanly for Nova-3's `keyterm` parameter.
- */
-
+/** High-value technical vocabulary hints for Deepgram Nova-3. */
 export const DEFAULT_TECHNICAL_KEYTERMS: string[] = [
-  "TypeScript", "JavaScript", "Python", "Golang", "Rust", "Java", "Node",
-  "React", "Next.js", "GraphQL", "WebSockets", "WebRTC", "Redux",
-  "REST", "gRPC", "Protobuf", "Microservices", "OAuth2", "FastAPI",
-  "PostgreSQL", "MongoDB", "Redis", "Elasticsearch", "Pinecone",
-  "Kubernetes", "Docker", "AWS", "Terraform", "Kafka",
-  "ACID", "Sharding", "Replication", "Deadlock", "Concurrency", "Idempotency",
-  "RAG", "Embeddings", "Vector Search", "Gemini", "Deepgram"
+  "VLM", "vLLM", "YOLOv8", "Nemotron", "NVIDIA NIM", "NIM", "LangGraph", "Agentic AI",
+  "multimodal", "RAG", "Embeddings", "Vector Search", "MCP", "ACP", "OpenID", "OAuth2",
+  "Kubernetes", "Docker", "Azure", "AWS", "FastAPI", "PostgreSQL", "Redis", "Kafka",
+  "WebSockets", "WebRTC", "gRPC", "Terraform", "Gemini", "Deepgram", "Pydantic",
 ];
 
-/**
- * Extract domain-specific keyterms from background text or user resume
- */
-export function extractCustomKeyterms(bgText?: string): string[] {
-  if (!bgText) return [];
-  
-  const words = bgText
-    .split(/[\s,.;:()]+/)
-    .map((w) => w.trim())
-    .filter((w) => w.length > 2 && /^[A-Za-z0-9.-]+$/.test(w));
-  
-  return Array.from(new Set(words)).slice(0, 20);
+function uniqueCaseInsensitive(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const cleaned = value.trim().replace(/\s+/g, " ").slice(0, 80);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result;
 }
 
-/**
- * Build clean keyterm list for Deepgram Nova-3 (capped at 30 items)
- */
+/** Extract explicitly tagged knowledge terms plus acronym/version-like tokens from candidate notes. */
+export function extractCustomKeyterms(bgText?: string): string[] {
+  if (!bgText) return [];
+  const explicit = Array.from(bgText.matchAll(/^\[TERM\]\s*(.+)$/gim)).map((match) => match[1].trim());
+  const techLike = bgText.match(/\b(?:[A-Z]{2,}[A-Za-z0-9.+-]*|[A-Za-z]+\d+(?:\.\d+)*|[A-Za-z]+\.[A-Za-z]+)\b/g) || [];
+  return uniqueCaseInsensitive([...explicit, ...techLike]).slice(0, 24);
+}
+
+/** Reserve space for high-value model/domain terms while still prioritizing session-specific vocabulary. */
 export function getCombinedKeyterms(customBg?: string): string[] {
   const custom = extractCustomKeyterms(customBg);
-  const combined = Array.from(new Set([...custom, ...DEFAULT_TECHNICAL_KEYTERMS]));
-  return combined.slice(0, 30);
+  const core = DEFAULT_TECHNICAL_KEYTERMS.slice(0, 14);
+  const remainder = DEFAULT_TECHNICAL_KEYTERMS.slice(14);
+  return uniqueCaseInsensitive([...core, ...custom.slice(0, 16), ...remainder]).slice(0, 30);
 }

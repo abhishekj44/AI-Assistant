@@ -20,6 +20,7 @@ const METRIC_PATTERN = /\b(metric|scale|scalability|latency|throughput|performan
 const LESSON_PATTERN = /\b(learn|lesson|improve|change|different|again|rebuild|next time|retrospective)\b/i;
 const SCENARIO_PATTERN = /\b(customer|scenario|given you|how would|you have to|solve|solution|architect|architecture|design|approach|pipeline|deploy|integration|integrate|worker|agent|vlm|vision|multimodal|model|trade-?off)\b/i;
 const EXAMPLE_PATTERN = /\b(example|use case|project|experience|similar|previously|before|worked on|implemented|built|designed|architected)\b/i;
+const OVERVIEW_PATTERN = /\b(tell me about yourself|walk me through (?:your )?(?:background|career|resume|experience)|career overview|work experience|resume|cv)\b/i;
 
 export interface CandidateContextSelection {
   context: string;
@@ -35,6 +36,7 @@ export interface CandidateContextSelection {
   projectEvidenceRequired: boolean;
   projectExampleIncluded: boolean;
   selectedExampleTitles: string[];
+  evidenceStrategy: "project_capsule" | "broad_profile" | "technical_core";
 }
 
 function normalize(text: string): string {
@@ -384,30 +386,44 @@ export function selectCandidateContextWithMeta(
     ? []
     : experienceEntries;
 
+  const overviewQuestion = OVERVIEW_PATTERN.test(question);
+  const useProjectCapsule = Boolean(strongTopProject && projectEvidenceRequired && !overviewQuestion);
+  const evidenceStrategy: CandidateContextSelection["evidenceStrategy"] = useProjectCapsule
+    ? "project_capsule"
+    : broadPersonalQuestion
+      ? "broad_profile"
+      : "technical_core";
+
   const profileSummaryBudget = broadPersonalQuestion ? 420 : 200;
-  const context = {
-    profile: {
-      headline: clipText(pack.profile.headline, 160),
-      summary: clipText(pack.profile.summary, profileSummaryBudget),
-      strengths: rankStrings(pack.profile.strengths, combinedTokens, 6, broadPersonalQuestion ? 5 : 2),
-    },
-    targetRole: pack.targetRole
-      ? {
-          title: pack.targetRole.title,
-          company: pack.targetRole.company,
-          priorities: rankStrings(pack.targetRole.priorities || [], combinedTokens, 4, broadPersonalQuestion ? 2 : 0),
-          requirements: rankStrings(pack.targetRole.requirements || [], combinedTokens, 4, 0),
-        }
-      : undefined,
-    skills: rankStrings(pack.skills, combinedTokens, 9, broadPersonalQuestion ? 8 : 5),
-    achievements: rankStrings(pack.achievements, combinedTokens, 4, broadPersonalQuestion ? 2 : 0)
-      .map((value) => clipText(value, 200)),
-    facts: rankStrings(pack.facts, combinedTokens, 6, broadPersonalQuestion ? 3 : 0)
-      .map((value) => clipText(value, 200)),
-    protectedProjectEvidence,
-    supportingProjects,
-    relevantExperience: effectiveExperienceEntries.map(({ experience }) => compactExperience(experience, combinedTokens, broadPersonalQuestion)),
-  };
+  const context = useProjectCapsule
+    ? {
+        candidateIdentity: {
+          headline: clipText(pack.profile.headline, 160),
+          projectRole: clipText(topProject?.project.role, 140),
+        },
+        protectedProjectEvidence,
+      }
+    : {
+        profile: {
+          headline: clipText(pack.profile.headline, 160),
+          summary: clipText(pack.profile.summary, profileSummaryBudget),
+          strengths: rankStrings(pack.profile.strengths, combinedTokens, 6, broadPersonalQuestion ? 5 : 2),
+        },
+        targetRole: pack.targetRole
+          ? {
+              title: pack.targetRole.title,
+              company: pack.targetRole.company,
+              priorities: rankStrings(pack.targetRole.priorities || [], combinedTokens, 4, broadPersonalQuestion ? 2 : 0),
+              requirements: rankStrings(pack.targetRole.requirements || [], combinedTokens, 4, 0),
+            }
+          : undefined,
+        skills: rankStrings(pack.skills, combinedTokens, 9, broadPersonalQuestion ? 8 : 5),
+        achievements: rankStrings(pack.achievements, combinedTokens, 4, broadPersonalQuestion ? 2 : 0).map((value) => clipText(value, 200)),
+        facts: rankStrings(pack.facts, combinedTokens, 6, broadPersonalQuestion ? 3 : 0).map((value) => clipText(value, 200)),
+        protectedProjectEvidence,
+        supportingProjects,
+        relevantExperience: effectiveExperienceEntries.map(({ experience }) => compactExperience(experience, combinedTokens, broadPersonalQuestion)),
+      };
 
   const selectedContext = fitContext(context, budgetChars);
   const rawChars = serializePackCore(pack).length;
@@ -431,6 +447,7 @@ export function selectCandidateContextWithMeta(
     projectEvidenceRequired,
     projectExampleIncluded: selectedExampleTitles.length > 0,
     selectedExampleTitles,
+    evidenceStrategy,
   };
 }
 

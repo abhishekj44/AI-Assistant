@@ -60,7 +60,12 @@ export function QABankManager() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    const refresh = () => void load();
+    window.addEventListener("qa-bank-updated", refresh);
+    return () => window.removeEventListener("qa-bank-updated", refresh);
+  }, []);
 
   const resetForm = () => {
     setQuestions("");

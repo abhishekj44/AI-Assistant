@@ -5,6 +5,9 @@ const stalePaths = [
   "app/api/pdf/route.ts",
   "lib/agents/pineconeService.ts",
   "lib/agents/ragOrchestrator.ts",
+  "lib/agents/localQuestionExtractor.ts",
+  "app/api/rag/route.ts",
+  "scripts/setup-pinecone-index.js",
 ];
 
 let removed = 0;

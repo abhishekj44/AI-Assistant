@@ -1,5 +1,3 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 /node_modules
 /.pnp
@@ -9,55 +7,58 @@
 # testing
 /coverage
 
-# next.js
+# Next.js / build output
 /.next/
 /out/
+/build/
 
-# production
-/build
+# local environment / deployment
+.env
+.env*.local
+.vercel
 
-# misc
+# OS / debug
 .DS_Store
 *.pem
-
-# debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
-.env
-.env*.local
-
-# vercel
-.vercel
-
-# typescript
+# TypeScript cache
 *.tsbuildinfo
-next-env.d.ts
 
-# sessions
-sessions/*.json
-!sessions/README.md
-sessions/README.md
+# local session data
+/sessions/*.json
+!/sessions/README.md
 
-# locally extracted candidate knowledge (may contain personal/company information)
+# local runtime knowledge/review data (may contain personal/company information)
+/candidate-knowledge-refined-v8.json
 /data/candidate-knowledge.json
 /data/qa-bank.json
+/data/qa-history.json
 /data/*.tmp
-!data/qa-bank.example.json
-data/candidate-knowledge.refined.example.json
+
+# schema/example banks stay versioned
+!/data/qa-bank.example.json
 data/qa-bank.example.json
+docs/ANSWER_QUALITY_PIPELINE.md
 docs/ARCHITECTURE.md
 docs/CONTEXT_INSPECTOR.md
 docs/LATENCY_DIAGNOSTICS.md
 docs/NEXT_STEPS.md
 docs/PROJECT_EVIDENCE.md
+docs/PROMPT_PROFILES.md
 docs/QA_BANK.md
 docs/TYPESCRIPT_FIXES.md
 docs/VALIDATION.md
-PATCH_NOTES_V8.md
-PATCH_NOTES_V7.md
-PATCH_NOTES_V6.md
+sessions/README.md
+MIGRATION_V9.md
+MIGRATION_V10.md
+package.zip
 PATCH_NOTES_V5.md
-data/qa-history.json
+PATCH_NOTES_V6.md
+PATCH_NOTES_V7.md
+PATCH_NOTES_V8.md
+PATCH_NOTES_V9_1.md
+PATCH_NOTES_V9.md
+PATCH_NOTES_V10.md

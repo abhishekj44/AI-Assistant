@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { DEFAULT_PROMPT_RULES, buildPrompt } from "@/lib/utils";
-import type { SpeakerRole } from "@/lib/conversationTypes";
+import type { SessionInfo, SpeakerRole } from "@/lib/conversationTypes";
+import { getCallPromptTemplate } from "@/lib/prompts";
 import {
   Sliders,
   Sparkles,
@@ -30,6 +31,7 @@ interface PromptModalProps {
   currentSummary?: string;
   recentTurns?: Array<{ speaker: SpeakerRole; text: string }>;
   focusQuestion?: string;
+  sessionInfo?: SessionInfo;
 }
 
 export function PromptModal({
@@ -42,6 +44,7 @@ export function PromptModal({
   currentSummary = "",
   recentTurns = [],
   focusQuestion = "",
+  sessionInfo,
 }: PromptModalProps) {
   const [activeTab, setActiveTab] = useState<"rules" | "persona" | "preview">("rules");
   const [localRules, setLocalRules] = useState<string>(customRules || DEFAULT_PROMPT_RULES);
@@ -81,8 +84,11 @@ export function PromptModal({
     "",
     currentSummary || "(No active summary yet)",
     sampleTurns,
-    localRules
+    localRules,
+    sessionInfo,
   );
+
+  const promptProfile = getCallPromptTemplate(sessionInfo);
 
   return (
     <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
@@ -101,7 +107,7 @@ export function PromptModal({
                   Settings
                 </span>
               </h2>
-              <p className="text-xs text-slate-400">Customize AI generation rules, persona, and inspect live prompts</p>
+              <p className="text-xs text-slate-400">Prompt profile: {promptProfile.displayName} · customize style/persona and inspect the layout</p>
             </div>
           </div>
 
@@ -125,7 +131,7 @@ export function PromptModal({
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
-            Prompt Rules & Guidelines
+            Style Preferences
           </button>
 
           <button
@@ -137,7 +143,7 @@ export function PromptModal({
             }`}
           >
             <User className="w-3.5 h-3.5" />
-            Candidate Persona & Background
+            Personal Context & Background
           </button>
 
           <button
@@ -162,7 +168,7 @@ export function PromptModal({
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                  System Rules & Answering Directives
+                  Optional Style Preferences
                 </Label>
                 <Button
                   type="button"
@@ -175,13 +181,13 @@ export function PromptModal({
                 </Button>
               </div>
               <p className="text-[11px] text-slate-400">
-                These rules guide the configured model&apos;s answer format, tone, verbosity, and conciseness during live sessions.
+                V10 core quality rules and the selected call-type prompt are versioned and always applied. These preferences only adjust tone/format and cannot replace the core answer contract.
               </p>
               <Textarea
                 rows={9}
                 value={localRules}
                 onChange={(e) => setLocalRules(e.target.value)}
-                placeholder="Enter custom prompt rules (one per line)..."
+                placeholder="Optional tone/format preferences (one per line)..."
                 className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-slate-200 font-mono text-xs leading-relaxed focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
               />
             </div>
@@ -192,10 +198,10 @@ export function PromptModal({
             <div className="space-y-3 animate-in fade-in duration-150">
               <Label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-indigo-400" />
-                Candidate Resume / Experience Summary
+                Personal / Candidate Context
               </Label>
               <p className="text-[11px] text-slate-400">
-                Include your technical stack, key projects, metrics, and role history. This background is automatically injected into prompts so answers reflect your real experience.
+                Use this for optional personal background that is not already in the structured Knowledge Pack. It is ignored in Taking Interview mode so interviewer follow-ups are not biased by your own candidate profile.
               </p>
               <Textarea
                 rows={9}
