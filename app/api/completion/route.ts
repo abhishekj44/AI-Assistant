@@ -32,7 +32,7 @@ function boundedInt(value: string | undefined, fallback: number, min: number, ma
 }
 
 const WEB_TIMEOUT_MS = boundedInt(process.env.WEB_SEARCH_TIMEOUT_MS, 1_200, 300, 5_000);
-const MAX_OUTPUT_TOKENS = boundedInt(process.env.LLM_MAX_OUTPUT_TOKENS, 420, 64, 1_000);
+const MAX_OUTPUT_TOKENS = boundedInt(process.env.LLM_MAX_OUTPUT_TOKENS, 750, 64, 1_000);
 const CANDIDATE_CONTEXT_MAX_CHARS = boundedInt(process.env.CANDIDATE_CONTEXT_MAX_CHARS, 4_200, 900, 5_000);
 const CANDIDATE_CONTEXT_STRONG_QA_CHARS = boundedInt(
   process.env.CANDIDATE_CONTEXT_STRONG_QA_CHARS,

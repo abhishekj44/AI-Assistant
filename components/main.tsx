@@ -8,6 +8,10 @@ import { Copilot } from "@/components/copilot";
 import type { HistoryData } from "@/lib/types";
 
 const History = dynamic(() => import("@/components/History"), { ssr: false });
+const ChatbotPopup = dynamic(
+  () => import("@/components/ChatbotPopup").then((m) => m.ChatbotPopup),
+  { ssr: false },
+);
 
 export default function MainPage() {
   const isRendered = useRef(false);
@@ -62,6 +66,8 @@ export default function MainPage() {
           {historyOpen && <History data={savedData} deleteData={deleteData} />}
         </div>
       )}
+      <ChatbotPopup />
     </div>
   );
 }
+

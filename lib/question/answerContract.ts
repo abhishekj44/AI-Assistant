@@ -25,19 +25,22 @@ export function inferAnswerProfile(
   const text = `${question}\n${scenarioContext}`.toLowerCase();
 
   if (callType === "taking_interview") {
-    const vague = /\b(generally|basically|usually|somehow|depends|various|many ways|we can use|i would use)\b/i.test(text) || text.length < 100;
     return {
       mode: "interviewer_followup",
-      minWords: 25,
-      maxWords: 70,
-      maxOutputTokens: 190,
+      minWords: 60,
+      maxWords: 250,
+      maxOutputTokens: 600,
       requestProjectExample: false,
       needsDiagnosis: false,
       needsSteps: false,
       needsValidation: false,
       needsTradeoff: false,
-      responseSequence: vague ? ["brief acknowledgement", "ask for one concrete implementation/example"] : ["brief transition", "targeted depth follow-up"],
-      rationale: vague ? "candidate response needs concrete evidence" : "interviewer follow-up",
+      responseSequence: [
+        "candidate answer evaluation & technical fact-check",
+        "primary follow-up question (contradiction / deep probe)",
+        "topic-switch follow-up question (pivot option)",
+      ],
+      rationale: "interviewer evaluation and follow-up generation",
     };
   }
 

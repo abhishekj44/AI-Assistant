@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { MeetingMemory, SpeakerRole, TranscriptTurn } from "@/lib/conversationTypes";
 import { normalizeCallType } from "@/lib/callTypes";
+import { createLLMStream } from "@/lib/llm/providerRouter";
+import { formatTranscriptForSummary, getSummarizerSystemPrompt, getSummarizerUserPrompt } from "@/lib/prompts/summarizer";
 
 export const runtime = "nodejs";
 const SESSIONS_DIR = path.join(process.cwd(), "sessions");
@@ -42,7 +44,7 @@ function sanitizeTurn(value: unknown, index: number): TranscriptTurn | null {
 
 function sanitizeMemory(value: any): MeetingMemory {
   return {
-    summary: typeof value?.summary === "string" ? value.summary.slice(0, 4_000) : "",
+    summary: typeof value?.summary === "string" ? value.summary.slice(0, 16_000) : "",
     currentTopic: typeof value?.currentTopic === "string" ? value.currentTopic.slice(0, 300) : undefined,
     facts: strings(value?.facts),
     decisions: strings(value?.decisions),
@@ -74,12 +76,40 @@ export async function POST(req: Request) {
         }
       : undefined;
 
+    let sessionSummary = "";
+    if (transcripts.length >= 2) {
+      try {
+        const callType = sessionInfo?.callType || "taking_interview";
+        const formattedTranscript = formatTranscriptForSummary(transcripts, callType, 35_000);
+        const systemPrompt = getSummarizerSystemPrompt(callType);
+        const userPrompt = getSummarizerUserPrompt(formattedTranscript, callType);
+
+        const handle = await createLLMStream(userPrompt, {
+          maxOutputTokens: 1_500,
+          systemInstruction: systemPrompt,
+        });
+
+        for await (const chunk of handle.stream) {
+          if (chunk.text) sessionSummary += chunk.text;
+        }
+        sessionSummary = sessionSummary.trim();
+      } catch (err) {
+        console.warn("[sessions] Failed to generate automatic session summary", err);
+      }
+    }
+
+    const safeMemory = sanitizeMemory(session?.memory);
+    if (sessionSummary) {
+      safeMemory.summary = sessionSummary;
+    }
+
     const safeSession = {
       id,
       startedAt: typeof session?.startedAt === "string" ? session.startedAt : new Date().toISOString(),
       endedAt: typeof session?.endedAt === "string" ? session.endedAt : new Date().toISOString(),
       transcripts,
-      memory: sanitizeMemory(session?.memory),
+      memory: safeMemory,
+      ...(sessionSummary ? { summary: sessionSummary } : {}),
       ...(sessionInfo ? { sessionInfo } : {}),
     };
 
@@ -87,7 +117,7 @@ export async function POST(req: Request) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = `${id}_${timestamp}.json`;
     await fs.writeFile(path.join(SESSIONS_DIR, filename), JSON.stringify(safeSession, null, 2), "utf8");
-    return NextResponse.json({ success: true, filename });
+    return NextResponse.json({ success: true, filename, summary: sessionSummary || safeMemory.summary });
   } catch (error) {
     console.error("Session persistence failed", error);
     return NextResponse.json({ error: "Failed to save session" }, { status: 500 });

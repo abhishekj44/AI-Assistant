@@ -111,9 +111,13 @@ function useLiveCompletion(
     if (isLoading) return;
 
     const questionBundle = transcriptStateMachine.getLatestQuestionBundle();
-    const focusQuestion = questionBundle?.primaryAsk || transcriptStateMachine.getLatestQuestionContext();
+    const focusQuestion = questionBundle?.primaryAsk
+      || transcriptStateMachine.getLatestQuestionContext()
+      || transcriptStateMachine.getLatestInterviewerTurn()?.text || "";
     const sessionInfo = sessionManager.getSessionInfo();
-    const recentTurns = transcriptStateMachine.getRecentFinalizedTurns(16);
+    const recentTurns = body.flag === FLAGS.SUMMERIZER
+      ? transcriptStateMachine.getRecentFinalizedTurns(100)
+      : transcriptStateMachine.getRecentFinalizedTurns(16);
     if (body.flag === FLAGS.COPILOT && !focusQuestion) {
       const mode = getCallPromptTemplate(sessionInfo);
       setError(new Error(`No usable ${mode.remoteRole} context is available yet.`));

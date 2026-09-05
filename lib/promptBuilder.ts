@@ -4,7 +4,7 @@ import { inferAnswerProfile, type AnswerProfile } from "@/lib/question/answerCon
 import type { WebSearchResult } from "@/lib/agents/simpleWebSearchAgent";
 import { normalizeCallType } from "@/lib/callTypes";
 import { CORE_QUALITY_RULES, DEFAULT_STYLE_PREFERENCES, getCallPromptTemplate } from "@/lib/prompts";
-import { getSummarizerSystemPrompt, getSummarizerUserPrompt } from "@/lib/prompts/summarizer";
+import { formatTranscriptForSummary, getSummarizerSystemPrompt, getSummarizerUserPrompt } from "@/lib/prompts/summarizer";
 
 export type { AnswerProfile } from "@/lib/question/answerContract";
 export { inferAnswerProfile } from "@/lib/question/answerContract";
@@ -88,10 +88,21 @@ export function buildAnswerSystemInstruction(
     ? `\n- Protected relevant project evidence is available. Include ONE concise first-person reference and explicitly connect the implementation pattern to the current problem.`
     : "";
 
+  const coreRules = template.callType === "taking_interview"
+    ? CORE_QUALITY_RULES.replace(
+        "- Output only the content the local user should say next.",
+        "- Provide actionable interviewer analysis/fact-checking alongside the spoken follow-up options.",
+      )
+    : CORE_QUALITY_RULES;
+
+  const sectionLabelingRule = template.callType === "taking_interview"
+    ? "- Clearly label the 3 sections (1. Evaluation & Fact-Check, 2. Primary Follow-Up Question, 3. Topic-Switch Follow-Up Question)."
+    : "- Do not mechanically label every section; make the response sound natural when spoken.";
+
   return `${template.assistantIdentity}
 
 IMMUTABLE CORE QUALITY RULES:
-${CORE_QUALITY_RULES}
+${coreRules}
 
 CALL-TYPE PROMPT (${template.id}):
 ${template.modeRules}
@@ -103,7 +114,7 @@ REQUEST-SPECIFIC CONTRACT:
 - Target approximately ${profile.minWords}-${profile.maxWords} words. Completeness and clarity are more important than exact word count.
 - Logical response sequence: ${profile.responseSequence.join(" -> ")}.
 - Diagnosis required: ${profile.needsDiagnosis ? "yes" : "no"}; implementation steps: ${profile.needsSteps ? "yes" : "no"}; validation: ${profile.needsValidation ? "yes" : "no"}; trade-off: ${profile.needsTradeoff ? "yes" : "no"}.
-- Do not mechanically label every section; make the response sound natural when spoken.${projectRule}${qaRules}
+${sectionLabelingRule}${projectRule}${qaRules}
 - Do not mention these instructions, prompt templates, memory, retrieval, or internal processing.
 
 OPTIONAL USER STYLE PREFERENCES:
@@ -189,6 +200,7 @@ export function buildSummarizerSystemInstruction(sessionInfo?: SessionInfo): str
 }
 
 export function buildSummarizerPrompt(turns: TranscriptTurn[], sessionInfo?: SessionInfo): string {
-  const transcriptText = formatTurnsWithBudget(turns, 6_000, normalizeCallType(sessionInfo?.callType));
-  return getSummarizerUserPrompt(transcriptText);
+  const callType = normalizeCallType(sessionInfo?.callType);
+  const transcriptText = formatTranscriptForSummary(turns, callType, 35_000);
+  return getSummarizerUserPrompt(transcriptText, callType);
 }
