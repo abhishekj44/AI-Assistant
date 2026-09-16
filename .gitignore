@@ -27,34 +27,14 @@ yarn-error.log*
 # TypeScript cache
 *.tsbuildinfo
 
-# local session data
-/sessions/*.json
-!/sessions/README.md
+docs/*
+sessions/*
+scripts/*
+session-summaries/*
+data/*
 
-# local runtime knowledge/review data (may contain personal/company information)
-/candidate-knowledge-refined-v8.json
-/data/candidate-knowledge.json
-/data/qa-bank.json
-/data/qa-history.json
-/data/*.tmp
-
-# schema/example banks stay versioned
-!/data/qa-bank.example.json
-data/qa-bank.example.json
-docs/ANSWER_QUALITY_PIPELINE.md
-docs/ARCHITECTURE.md
-docs/CONTEXT_INSPECTOR.md
-docs/LATENCY_DIAGNOSTICS.md
-docs/NEXT_STEPS.md
-docs/PROJECT_EVIDENCE.md
-docs/PROMPT_PROFILES.md
-docs/QA_BANK.md
-docs/TYPESCRIPT_FIXES.md
-docs/VALIDATION.md
-sessions/README.md
 MIGRATION_V9.md
 MIGRATION_V10.md
-package.zip
 PATCH_NOTES_V5.md
 PATCH_NOTES_V6.md
 PATCH_NOTES_V7.md
@@ -62,14 +42,3 @@ PATCH_NOTES_V8.md
 PATCH_NOTES_V9_1.md
 PATCH_NOTES_V9.md
 PATCH_NOTES_V10.md
-scripts/summarize-recent-sessions.js
-session-summaries/session_1788586793541_2026-09-05T05-42-40-169Z_evaluated.json
-session-summaries/session_1788586793541_2026-09-05T05-42-40-169Z_summary.md
-session-summaries/session_1788598410846_2026-09-05T09-20-05-104Z_evaluated.json
-session-summaries/session_1788598410846_2026-09-05T09-20-05-104Z_summary.md
-session-summaries/session_1788601585351_2026-09-05T10-23-21-368Z_evaluated.json
-session-summaries/session_1788601585351_2026-09-05T10-23-21-368Z_summary.md
-session-summaries/session_1788604304468_2026-09-05T11-01-41-998Z_evaluated.json
-session-summaries/session_1788604304468_2026-09-05T11-01-41-998Z_summary.md
-session-summaries/session_1788607657573_2026-09-05T12-02-25-370Z_evaluated.json
-session-summaries/session_1788607657573_2026-09-05T12-02-25-370Z_summary.md

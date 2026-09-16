@@ -1,5 +1,5 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-import type { LLMRequestOptions, LLMStreamHandle } from "./types";
+import type { LLMRequestOptions, LLMStreamHandle, GroundingInfo } from "./types";
 import { LLMProviderError } from "./types";
 
 function requireApiKey(): string {
@@ -51,6 +51,9 @@ export async function createGeminiStream(
         thinkingLevel: thinking.sdk,
       },
     };
+    if (options.enableGrounding) {
+      config.tools = [{ googleSearch: {} }];
+    }
     if (serviceTier === "priority") config.serviceTier = "priority";
 
     const request: any = {
@@ -75,7 +78,33 @@ export async function createGeminiStream(
               serviceTierActual: usageMetadata.serviceTier ? String(usageMetadata.serviceTier).toLowerCase() : undefined,
             }
           : undefined;
-        if (text || usage) yield { text, usage };
+
+        // Extract grounding metadata when Google Search grounding is active.
+        let grounding: GroundingInfo | undefined;
+        const candidate = (chunk as any).candidates?.[0];
+        const gm = candidate?.groundingMetadata;
+        if (gm) {
+          const sources = Array.isArray(gm.groundingSupports)
+            ? gm.groundingSupports.map((s: any) => ({
+                uri: s.segment?.uri || s.webReference?.uri,
+                title: s.segment?.title || s.webReference?.title,
+                text: (s.segment?.text || s.webReference?.text || "").slice(0, 200),
+              }))
+            : Array.isArray(gm.groundingChunks)
+              ? gm.groundingChunks.map((c: any) => ({
+                  uri: c.web?.uri,
+                  title: c.web?.title,
+                  text: "",
+                }))
+              : [];
+          grounding = {
+            searchQueries: Array.isArray(gm.webSearchQueries) ? gm.webSearchQueries : [],
+            sources: sources.filter((s: any) => s.uri || s.title),
+            retrievalScore: typeof gm.retrievalScore === "number" ? gm.retrievalScore : undefined,
+          };
+        }
+
+        if (text || usage || grounding) yield { text, usage, grounding };
       }
     };
 

@@ -4,6 +4,7 @@ export interface LLMRequestOptions {
   maxOutputTokens?: number;
   sessionId?: string;
   systemInstruction?: string;
+  enableGrounding?: boolean;
 }
 
 export interface LLMUsage {
@@ -15,9 +16,22 @@ export interface LLMUsage {
   serviceTierActual?: string;
 }
 
+export interface GroundingSource {
+  uri?: string;
+  title?: string;
+  text?: string;
+}
+
+export interface GroundingInfo {
+  searchQueries: string[];
+  sources: GroundingSource[];
+  retrievalScore?: number;
+}
+
 export interface LLMStreamDelta {
   text?: string;
   usage?: LLMUsage;
+  grounding?: GroundingInfo;
 }
 
 export interface LLMStreamDiagnostics {

@@ -33,7 +33,7 @@ function boundedInt(value: string | undefined, fallback: number, min: number, ma
 
 const WEB_TIMEOUT_MS = boundedInt(process.env.WEB_SEARCH_TIMEOUT_MS, 1_200, 300, 5_000);
 const MAX_OUTPUT_TOKENS = boundedInt(process.env.LLM_MAX_OUTPUT_TOKENS, 750, 64, 1_000);
-const CANDIDATE_CONTEXT_MAX_CHARS = boundedInt(process.env.CANDIDATE_CONTEXT_MAX_CHARS, 4_200, 900, 5_000);
+const CANDIDATE_CONTEXT_MAX_CHARS = boundedInt(process.env.CANDIDATE_CONTEXT_MAX_CHARS, 4_200, 900, 16_000);
 const CANDIDATE_CONTEXT_STRONG_QA_CHARS = boundedInt(
   process.env.CANDIDATE_CONTEXT_STRONG_QA_CHARS,
   1_800,
@@ -466,6 +466,7 @@ export async function POST(request: Request) {
       },
       question,
       maxOutputTokens: Math.min(MAX_OUTPUT_TOKENS, answerProfile.maxOutputTokens),
+      enableGrounding: callType === "giving_interview",
     });
   } catch (error: any) {
     console.error(`[completion:${requestId}] request failed`, error);
@@ -488,6 +489,7 @@ function streamToClient(params: {
   contextSnapshot?: CompletionContextSnapshot;
   preGenerationMetrics?: PreGenerationMetrics;
   maxOutputTokens?: number;
+  enableGrounding?: boolean;
 }) {
   const preModelMs = Math.round(performance.now() - params.requestStarted);
 
@@ -518,6 +520,7 @@ function streamToClient(params: {
             maxOutputTokens: params.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
             sessionId: params.sessionId,
             systemInstruction: params.systemInstruction,
+            enableGrounding: params.enableGrounding,
           });
           modelConnectMs = Math.round(performance.now() - connectStarted);
           if (cancelled) return;
@@ -539,6 +542,7 @@ function streamToClient(params: {
           );
 
           const streamIterationStarted = performance.now();
+          let groundingData: { searchQueries: string[]; sources: { uri?: string; title?: string; text?: string }[] } | null = null;
           for await (const chunk of handle.stream) {
             if (cancelled) break;
             if (!firstChunkAt) firstChunkAt = performance.now();
@@ -548,6 +552,11 @@ function streamToClient(params: {
             if (chunk.usage?.cachedInputTokens != null) cachedInputTokens = chunk.usage.cachedInputTokens;
             if (chunk.usage?.thoughtTokens != null) thoughtTokens = chunk.usage.thoughtTokens;
             if (chunk.usage?.serviceTierActual) serviceTierActual = chunk.usage.serviceTierActual;
+            if (chunk.grounding) {
+              if (!groundingData) groundingData = { searchQueries: [], sources: [] };
+              if (chunk.grounding.searchQueries.length > 0) groundingData.searchQueries = chunk.grounding.searchQueries;
+              if (chunk.grounding.sources.length > 0) groundingData.sources.push(...chunk.grounding.sources);
+            }
             if (!chunk.text) continue;
             if (!firstTokenAt) {
               firstTokenAt = performance.now();
@@ -568,6 +577,22 @@ function streamToClient(params: {
 
           if (params.webResults.length > 0) {
             controller.enqueue(sse("sources", { citations: webCitations(params.webResults) }));
+          }
+
+          if (groundingData && (groundingData.searchQueries.length > 0 || groundingData.sources.length > 0)) {
+            // Deduplicate sources by URI.
+            const seen = new Set<string>();
+            const uniqueSources = groundingData.sources.filter((s) => {
+              const key = s.uri || s.title || "";
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            controller.enqueue(sse("grounding", {
+              searchQueries: groundingData.searchQueries,
+              sources: uniqueSources,
+              wasGrounded: uniqueSources.length > 0,
+            }));
           }
 
           const completedAt = performance.now();
