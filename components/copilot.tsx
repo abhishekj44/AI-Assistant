@@ -11,6 +11,7 @@ import {
   Eye,
   EyeOff,
   Globe,
+  GraduationCap,
   HelpCircle,
   Send,
   Sliders,
@@ -86,11 +87,25 @@ function parseSSEBlock(block: string): SSEMessage | null {
   }
 }
 
+interface SlotState {
+  completion: string;
+  provider: string;
+  model: string;
+  streamStatus: string;
+  metrics: CompletionMetrics | null;
+  error: Error | null;
+  done: boolean;
+}
+
+const emptySlot: SlotState = { completion: "", provider: "", model: "", streamStatus: "", metrics: null, error: null, done: false };
+
 function useLiveCompletion(
   body: { bg: string; flag: FLAGS; customRules: string },
   onAutoSave?: (data: HistoryData) => void,
 ) {
-  const [completion, setCompletion] = useState("");
+  const [slotA, setSlotA] = useState<SlotState>({ ...emptySlot });
+  const [slotB, setSlotB] = useState<SlotState>({ ...emptySlot });
+  const [isParallel, setIsParallel] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [question, setQuestion] = useState("");
@@ -126,7 +141,9 @@ function useLiveCompletion(
 
     setQuestion(focusQuestion);
     setQuestionConfidence(questionBundle?.primaryAskConfidence || "fallback");
-    setCompletion("");
+    setSlotA({ ...emptySlot });
+    setSlotB({ ...emptySlot });
+    setIsParallel(false);
     setCitations([]);
     setMetrics(null);
     setContextSnapshot(null);
@@ -139,36 +156,46 @@ function useLiveCompletion(
     setIsLoading(true);
 
     const requestStarted = performance.now();
-    let firstVisibleTokenAt: number | null = null;
     let firstSseAt: number | null = null;
-    let pendingText = "";
-    let fullGeneratedText = "";
+    const pendingText: Record<string, string> = { a: "", b: "" };
+    const fullText: Record<string, string> = { a: "", b: "" };
     let streamHadError = false;
     let derivedQuestion = focusQuestion;
-    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushTimers: Record<string, ReturnType<typeof setTimeout> | null> = { a: null, b: null };
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const flushPendingText = () => {
-      if (flushTimer) {
-        clearTimeout(flushTimer);
-        flushTimer = null;
-      }
-      if (!pendingText) return;
-      const next = pendingText;
-      pendingText = "";
-      setCompletion((previous) => previous + next);
+    const setSlotByKey = (slot: string) => slot === "a" ? setSlotA : setSlotB;
+
+    const flushSlot = (slot: string) => {
+      if (flushTimers[slot]) { clearTimeout(flushTimers[slot]!); flushTimers[slot] = null; }
+      if (!pendingText[slot]) return;
+      const next = pendingText[slot];
+      pendingText[slot] = "";
+      setSlotByKey(slot)((prev) => ({ ...prev, completion: prev.completion + next }));
     };
 
-    const enqueueText = (text: string) => {
-      pendingText += text;
-      fullGeneratedText += text;
-      if (flushTimer) return;
-      // At most ~25 UI updates/sec. This avoids re-running ReactMarkdown for every provider chunk.
-      flushTimer = setTimeout(() => {
-        flushTimer = null;
-        flushPendingText();
-      }, 40);
+    const enqueueSlotText = (slot: string, text: string) => {
+      pendingText[slot] += text;
+      fullText[slot] += text;
+      if (flushTimers[slot]) return;
+      flushTimers[slot] = setTimeout(() => { flushTimers[slot] = null; flushSlot(slot); }, 40);
+    };
+
+    // Legacy single-model text buffering (for summarizer fallback)
+    let pendingSingleText = "";
+    let fullSingleText = "";
+    let singleFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushSingle = () => {
+      if (singleFlushTimer) { clearTimeout(singleFlushTimer); singleFlushTimer = null; }
+      if (!pendingSingleText) return;
+      const next = pendingSingleText; pendingSingleText = "";
+      setSlotA((prev) => ({ ...prev, completion: prev.completion + next }));
+    };
+    const enqueueSingleText = (text: string) => {
+      pendingSingleText += text; fullSingleText += text;
+      if (singleFlushTimer) return;
+      singleFlushTimer = setTimeout(() => { singleFlushTimer = null; flushSingle(); }, 40);
     };
 
     try {
@@ -208,7 +235,73 @@ function useLiveCompletion(
           }));
         }
 
-        switch (message.event) {
+        const evt = message.event;
+
+        // Parallel-mode events: delta_a, delta_b, meta_a, meta_b, etc.
+        if (evt === "parallel_init") {
+          setIsParallel(true);
+          const slots = message.data?.slots || [];
+          for (const s of slots) {
+            const setter = s.slot === "A" ? setSlotA : setSlotB;
+            setter((prev) => ({ ...prev, provider: s.provider, model: s.model }));
+          }
+          setMetrics((previous) => ({ ...(previous || {}), ...message.data }));
+          return;
+        }
+
+        // Per-slot delta
+        if (evt === "delta_a" || evt === "delta_b") {
+          const slot = evt === "delta_a" ? "a" : "b";
+          const text = String(message.data?.text || "");
+          if (text) enqueueSlotText(slot, text);
+          return;
+        }
+
+        // Per-slot meta
+        if (evt === "meta_a" || evt === "meta_b") {
+          const setter = evt === "meta_a" ? setSlotA : setSlotB;
+          setter((prev) => ({ ...prev, provider: message.data?.provider || prev.provider, model: message.data?.model || prev.model }));
+          return;
+        }
+
+        // Per-slot status
+        if (evt === "status_a" || evt === "status_b") {
+          const setter = evt === "status_a" ? setSlotA : setSlotB;
+          setter((prev) => ({ ...prev, streamStatus: String(message.data?.message || "") }));
+          return;
+        }
+
+        // Per-slot metrics
+        if (evt === "metrics_a" || evt === "metrics_b") {
+          const setter = evt === "metrics_a" ? setSlotA : setSlotB;
+          setter((prev) => ({ ...prev, metrics: message.data }));
+          return;
+        }
+
+        // Per-slot done
+        if (evt === "done_a" || evt === "done_b") {
+          const slot = evt === "done_a" ? "a" : "b";
+          flushSlot(slot);
+          const setter = evt === "done_a" ? setSlotA : setSlotB;
+          setter((prev) => ({ ...prev, done: true, streamStatus: "" }));
+          return;
+        }
+
+        // Per-slot error
+        if (evt === "error_a" || evt === "error_b") {
+          const setter = evt === "error_a" ? setSlotA : setSlotB;
+          setter((prev) => ({ ...prev, error: new Error(message.data?.message || "Stream failed"), done: true, streamStatus: "" }));
+          return;
+        }
+
+        // Per-slot grounding
+        if (evt === "grounding_a" || evt === "grounding_b") {
+          // Grounding data not displayed in dual mode currently; could be extended later
+          return;
+        }
+
+        // === Legacy single-model events (summarizer still uses streamToClient) ===
+        switch (evt) {
           case "context": {
             const snapshot = message.data as CompletionContextSnapshot;
             setContextSnapshot(snapshot);
@@ -229,18 +322,11 @@ function useLiveCompletion(
               setQuestion(message.data.question);
             }
             setMetrics((previous) => ({ ...(previous || {}), ...message.data }));
+            setSlotA((prev) => ({ ...prev, provider: message.data?.provider || prev.provider, model: message.data?.model || prev.model }));
             break;
           case "delta": {
             const text = String(message.data?.text || "");
-            if (!text) break;
-            if (!firstVisibleTokenAt) {
-              firstVisibleTokenAt = performance.now();
-              setMetrics((previous) => ({
-                ...(previous || {}),
-                clientTtftMs: Math.round(firstVisibleTokenAt! - requestStarted),
-              }));
-            }
-            enqueueText(text);
+            if (text) enqueueSingleText(text);
             break;
           }
           case "sources":
@@ -250,9 +336,6 @@ function useLiveCompletion(
             setMetrics((previous) => ({
               ...(previous || {}),
               ...message.data,
-              clientTtftMs:
-                previous?.clientTtftMs ??
-                (firstVisibleTokenAt ? Math.round(firstVisibleTokenAt - requestStarted) : undefined),
             }));
             break;
           case "error":
@@ -278,16 +361,18 @@ function useLiveCompletion(
       buffer += decoder.decode().replace(/\r\n/g, "\n");
       const trailing = parseSSEBlock(buffer.trim());
       if (trailing) handleMessage(trailing);
-      flushPendingText();
+      flushSlot("a");
+      flushSlot("b");
+      flushSingle();
       setMetrics((previous) => ({
         ...(previous || {}),
         clientTotalMs: Math.round(performance.now() - requestStarted),
       }));
       setStreamStatus("");
 
-      // Auto-save generated Q&A pair on successful stream completion
-      if (!streamHadError && fullGeneratedText.trim()) {
-        const finalAnswer = fullGeneratedText.trim();
+      // Auto-save: use slot A's text as the primary answer
+      const finalAnswer = (fullText.a || fullSingleText || "").trim();
+      if (!streamHadError && finalAnswer) {
         const finalQuestion = derivedQuestion || focusQuestion || "";
         const tag = body.flag === FLAGS.SUMMERIZER
           ? "Summarizer"
@@ -304,7 +389,6 @@ function useLiveCompletion(
         };
         onAutoSave?.(entry);
 
-        // Persist asynchronously after generation; this is outside the answer critical path.
         void fetch("/api/qa-history", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -323,12 +407,15 @@ function useLiveCompletion(
         }).catch((error) => console.warn("Failed to auto-persist Q&A to server", error));
       }
     } catch (caught: any) {
-      flushPendingText();
+      flushSlot("a");
+      flushSlot("b");
+      flushSingle();
       if (caught?.name !== "AbortError") {
         setError(caught instanceof Error ? caught : new Error("Completion failed"));
       }
     } finally {
-      if (flushTimer) clearTimeout(flushTimer);
+      for (const key of Object.keys(flushTimers)) if (flushTimers[key]) clearTimeout(flushTimers[key]!);
+      if (singleFlushTimer) clearTimeout(singleFlushTimer);
       abortRef.current = null;
       setStreamStatus("");
       setIsLoading(false);
@@ -370,8 +457,14 @@ function useLiveCompletion(
     setIsLoading(false);
   }, []);
 
+  // Backward-compatible: expose slotA completion as the primary "completion" for existing UI
+  const completion = slotA.completion;
+
   return {
     completion,
+    slotA,
+    slotB,
+    isParallel,
     isLoading,
     error,
     question,
@@ -408,6 +501,9 @@ export function Copilot({ addInSavedData }: CopilotProps) {
   const requestBody = { bg, flag, customRules };
   const {
     completion,
+    slotA,
+    slotB,
+    isParallel,
     isLoading,
     error,
     question,
@@ -529,11 +625,31 @@ export function Copilot({ addInSavedData }: CopilotProps) {
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500"><Bot className="h-5 w-5" /></div>
             <div className="min-w-0">
-              <h1 className="truncate text-base font-bold tracking-tight">AI Meeting Copilot <span className="ml-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase text-emerald-400">Low Latency</span>{activeSessionInfo && <span className="ml-1 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-[10px] text-indigo-300">{callPrompt.displayName}</span>}</h1>
+              <h1 className="truncate text-base font-bold tracking-tight">AI Meeting Copilot <span className="ml-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase text-emerald-400">Low Latency</span>{activeSessionInfo && <span className={`ml-1 rounded-full border px-2 py-0.5 text-[10px] ${activeSessionInfo?.modeVariant === "course_admission" ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-indigo-500/20 bg-indigo-500/10 text-indigo-300"}`}>{callPrompt.displayName}</span>}</h1>
               <p className="truncate text-xs text-slate-400">Speaker-aware context · local candidate knowledge · diagnostics on demand</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {activeSessionInfo?.callType === "taking_interview" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const currentVariant = activeSessionInfo?.modeVariant;
+                  const newVariant = currentVariant === "course_admission" ? "standard" : "course_admission";
+                  sessionManager.updateSessionInfo({ modeVariant: newVariant });
+                }}
+                className={`h-8 px-3 text-xs border transition-all ${
+                  activeSessionInfo?.modeVariant === "course_admission"
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                    : "border-slate-800 text-slate-400 hover:text-white"
+                }`}
+                title="Toggle Course Selection & Mentoring Mode (Temporary)"
+              >
+                <GraduationCap className={`mr-1.5 h-3.5 w-3.5 ${activeSessionInfo?.modeVariant === "course_admission" ? "text-emerald-400" : "text-slate-400"}`} />
+                {activeSessionInfo?.modeVariant === "course_admission" ? "Course Mode: Active" : "Course Mode: Off"}
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setSetupOpen((value) => !value)} className="h-8 px-3 text-xs text-slate-300 hover:text-white border border-slate-800">
               <Database className="mr-1.5 h-3.5 w-3.5 text-violet-400" /> Knowledge & Q&A
             </Button>
@@ -600,7 +716,63 @@ export function Copilot({ addInSavedData }: CopilotProps) {
               </div>
             )}
 
-            {completion ? (
+            {isParallel && (slotA.completion || slotB.completion) ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {[slotA, slotB].map((slot, idx) => {
+                  const label = idx === 0 ? "A" : "B";
+                  const borderColor = idx === 0 ? "border-indigo-500/30" : "border-violet-500/30";
+                  const accentBg = idx === 0 ? "bg-indigo-500/10" : "bg-violet-500/10";
+                  const accentText = idx === 0 ? "text-indigo-400" : "text-violet-400";
+                  const headerBg = idx === 0 ? "bg-indigo-950/30" : "bg-violet-950/30";
+                  const isSlotStreaming = isLoading && !slot.done;
+                  const hasContent = slot.completion.length > 0;
+                  const slotMetrics = slot.metrics;
+
+                  return (
+                    <div key={label} className={`overflow-hidden rounded-xl border ${borderColor} bg-slate-950/70 shadow-md`}>
+                      <div className={`flex items-center justify-between border-b border-slate-800 ${headerBg} px-4 py-3`}>
+                        <div className="flex items-center gap-2">
+                          <div className={`flex h-6 w-6 items-center justify-center rounded-md ${accentBg} ${accentText} text-xs font-bold`}>
+                            {label}
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-200">{slot.provider || "Connecting…"}</h3>
+                            {slot.model && <p className="text-[10px] text-slate-500">{slot.model}</p>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isSlotStreaming && <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent text-indigo-400" />}
+                          {slot.done && <span className={`inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400`}><Check className="h-2.5 w-2.5" /> Done</span>}
+                          {slot.error && <span className="rounded-full border border-rose-500/20 bg-rose-500/10 px-2 py-0.5 text-[10px] text-rose-400">Error</span>}
+                        </div>
+                      </div>
+                      {hasContent ? (
+                        isSlotStreaming ? (
+                          <div className="whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-200">{slot.completion}</div>
+                        ) : (
+                          <div className="prose prose-invert max-w-none p-4 text-sm leading-relaxed text-slate-200"><ReactMarkdown>{slot.completion}</ReactMarkdown></div>
+                        )
+                      ) : slot.error ? (
+                        <div className="flex items-center gap-2 p-4 text-xs text-rose-300"><AlertCircle className="h-4 w-4 flex-none" /> {slot.error.message}</div>
+                      ) : (
+                        <div className="p-6 text-center">
+                          <span className="mx-auto mb-2 block h-5 w-5 animate-spin rounded-full border-2 border-slate-600 border-t-transparent" />
+                          <p className="text-xs text-slate-500">Waiting for {slot.provider || "model"}…</p>
+                        </div>
+                      )}
+                      {slotMetrics && (
+                        <div className="flex flex-wrap gap-3 border-t border-slate-800 bg-slate-900/30 px-4 py-2 text-[10px] text-slate-500">
+                          {slotMetrics.serverTtftMs != null && <span>TTFT: {slotMetrics.serverTtftMs}ms</span>}
+                          {slotMetrics.totalMs != null && <span>Total: {slotMetrics.totalMs}ms</span>}
+                          {slotMetrics.tokensPerSecond != null && <span>{slotMetrics.tokensPerSecond} tok/s</span>}
+                          {slotMetrics.outputTokens != null && <span>{slotMetrics.outputTokens} tokens</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : completion ? (
               <div className="overflow-hidden rounded-xl border border-slate-800/80 bg-slate-950/70 shadow-md">
                 <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/50 px-5 py-3.5">
                   <div className="flex items-center gap-2">

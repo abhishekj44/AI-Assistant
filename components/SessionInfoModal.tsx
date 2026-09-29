@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Briefcase, Building2, FileText, Play, X } from "lucide-react";
+import { Briefcase, Building2, FileText, GraduationCap, Play, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { CALL_TYPES, type CallType } from "@/lib/callTypes";
 import type { SessionInfo } from "@/lib/conversationTypes";
 
@@ -18,6 +19,7 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
   const [company, setCompany] = useState("");
   const [callType, setCallType] = useState<CallType | null>(null);
   const [details, setDetails] = useState("");
+  const [isCourseAdmission, setIsCourseAdmission] = useState(false);
   const companyRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -36,6 +38,7 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
       company: company.trim(),
       callType,
       details: details.trim(),
+      modeVariant: (callType === "taking_interview" && isCourseAdmission) ? "course_admission" : "standard",
     };
     try {
       if (info.company) localStorage.setItem(STORAGE_KEY_LAST_COMPANY, info.company);
@@ -44,7 +47,8 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
     setCompany("");
     setCallType(null);
     setDetails("");
-  }, [company, callType, details, onConfirm]);
+    setIsCourseAdmission(false);
+  }, [company, callType, details, isCourseAdmission, onConfirm]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && callType) {
@@ -95,6 +99,29 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
               ))}
             </div>
           </div>
+
+          {callType === "taking_interview" && (
+            <div className="flex items-center gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3.5 animate-in fade-in duration-200">
+              <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 flex-none">
+                <GraduationCap className="h-4 w-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-indigo-200 flex items-center gap-1.5">
+                  Course Selection / Admission Mode
+                  <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Temporary</span>
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                  Motivate candidates during the interview, evaluate track fit (IIT Roorkee / Kharagpur / Pravartak / FDE), and reference the FDE interview questions guide.
+                </div>
+              </div>
+              <Switch
+                id="course-admission-toggle"
+                checked={isCourseAdmission}
+                onCheckedChange={setIsCourseAdmission}
+                aria-label="Enable Course Admission Mode"
+              />
+            </div>
+          )}
 
           <div>
             <label htmlFor="session-company" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-300"><Building2 className="h-3.5 w-3.5 text-indigo-400" /> Company / Organization</label>

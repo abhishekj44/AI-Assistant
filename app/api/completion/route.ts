@@ -8,6 +8,7 @@ import { EMPTY_KNOWLEDGE_PACK } from "@/lib/knowledge/types";
 import { selectCandidateContextWithMeta, type CandidateContextSelection } from "@/lib/knowledge/contextSelector";
 import { buildQAGuidance, selectQAMatches } from "@/lib/qa/qaSelector";
 import { readQABankWithMeta } from "@/lib/server/qaStore";
+import { readCourseInterviewGuide } from "@/lib/server/courseGuideStore";
 import { EMPTY_QA_BANK } from "@/lib/qa/types";
 import { webSearchAgent, type WebSearchResult } from "@/lib/agents/simpleWebSearchAgent";
 import {
@@ -16,7 +17,8 @@ import {
   buildSummarizerPrompt,
   buildSummarizerSystemInstruction,
 } from "@/lib/promptBuilder";
-import { createLLMStream } from "@/lib/llm/providerRouter";
+import { createLLMStream, createParallelLLMStreams } from "@/lib/llm/providerRouter";
+import type { ParallelStreamHandle } from "@/lib/llm/providerRouter";
 import { LLMProviderError } from "@/lib/llm/types";
 import type { CompletionContextSnapshot } from "@/lib/diagnostics/types";
 import { buildQuestionBundle, sanitizeQuestionBundle, type QuestionBundle } from "@/lib/question/questionBundle";
@@ -178,6 +180,22 @@ function needsFreshWeb(question: string): boolean {
   return /\b(today|currently\s+(?:available|supported|ceo|president|version|price|pricing|released)|current\s+(?:version|price|pricing|ceo|president|release|status)|latest|recent\s+(?:news|release|update)|this\s+(?:week|month|year)|as\s+of\s+20\d{2}|released\s+(?:today|recently|this))\b/i.test(question);
 }
 
+/**
+ * Broader check for questions that would benefit from Google Search grounding.
+ * Covers technical trends, tool comparisons, market/industry questions, and
+ * temporal references — but NOT personal/behavioral questions.
+ */
+function needsGrounding(question: string): boolean {
+  // Skip grounding for clearly personal/behavioral questions.
+  if (/\b(tell me about a time|your experience|your background|your project|you built|you designed|you implemented|walk me through your|describe a situation|conflict with|leadership example|your strengths|your weakness)\b/i.test(question)) {
+    return false;
+  }
+  // Always ground temporal questions.
+  if (needsFreshWeb(question)) return true;
+  // Ground questions about trends, comparisons, tools, best practices, industry topics.
+  return /\b(trend|emerging|state of the art|best practice|industry|market|adoption|compare|vs\.?\b|versus|alternative|competitor|benchmark|framework|tool|library|platform|service|cloud|aws|azure|gcp|openai|anthropic|gemini|llama|mistral|graphrag|langgraph|langchain|kubernetes|docker|terraform|new feature|released|update|roadmap|deprecat)\b/i.test(question);
+}
+
 async function searchFreshWeb(question: string): Promise<{ results: WebSearchResult[]; elapsedMs: number }> {
   if (!needsFreshWeb(question) || !process.env.TAVILY_API_KEY) return { results: [], elapsedMs: 0 };
   const started = performance.now();
@@ -285,9 +303,11 @@ export async function POST(request: Request) {
           return { ...result, elapsedMs: Math.round(performance.now() - started) };
         })()
       : Promise.resolve({ bank: EMPTY_QA_BANK, cacheHit: true, elapsedMs: 0 });
+    const isCourseAdmission = callType === "taking_interview" && sessionInfo?.modeVariant === "course_admission";
+    const courseGuidePromise = isCourseAdmission ? readCourseInterviewGuide() : Promise.resolve("");
     const freshQuery = [question, scenarioContext.slice(-900)].filter(Boolean).join(" ");
     const webPromise = callType === "taking_interview" ? Promise.resolve({ results: [], elapsedMs: 0 }) : searchFreshWeb(freshQuery);
-    const [knowledge, qa, web] = await Promise.all([knowledgePromise, qaPromise, webPromise]);
+    const [knowledge, qa, web, courseGuide] = await Promise.all([knowledgePromise, qaPromise, webPromise, courseGuidePromise]);
     const pack = knowledge.pack;
 
     const currentQuestionTurnIds = new Set(questionBundle.turnIds);
@@ -343,6 +363,7 @@ export async function POST(request: Request) {
       candidateNotesMaxChars: CANDIDATE_NOTES_MAX_CHARS,
       recentConversationMaxChars: RECENT_CONTEXT_MAX_CHARS,
       answerProfile,
+      courseGuide,
     });
     const systemInstruction = buildAnswerSystemInstruction(
       typeof body?.customRules === "string" ? body.customRules : undefined,
@@ -413,7 +434,7 @@ export async function POST(request: Request) {
       systemInstructionChars: systemInstruction.length,
     };
 
-    return streamToClient({
+    const sharedParams = {
       requestId,
       requestStarted,
       prompt: promptParts.prompt,
@@ -466,8 +487,10 @@ export async function POST(request: Request) {
       },
       question,
       maxOutputTokens: Math.min(MAX_OUTPUT_TOKENS, answerProfile.maxOutputTokens),
-      enableGrounding: callType === "giving_interview",
-    });
+      enableGrounding: callType === "giving_interview" && needsGrounding(question),
+    };
+
+    return streamParallelToClient(sharedParams);
   } catch (error: any) {
     console.error(`[completion:${requestId}] request failed`, error);
     const status = error instanceof LLMProviderError && error.status && error.status < 500 ? error.status : 503;
@@ -665,6 +688,195 @@ function streamToClient(params: {
     cancel() {
       cancelled = true;
       // Provider SDK cancellation is not universally available, but downstream chunks are discarded immediately.
+    },
+  });
+
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+type StreamParams = Parameters<typeof streamToClient>[0];
+
+function streamParallelToClient(params: StreamParams) {
+  const preModelMs = Math.round(performance.now() - params.requestStarted);
+
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (params.contextSnapshot) controller.enqueue(sse("context", params.contextSnapshot));
+      controller.enqueue(sse("status", { stage: "model_wait", message: "Connecting to models…" }));
+
+      const run = async () => {
+        let handles: ParallelStreamHandle[] = [];
+
+        try {
+          const connectStarted = performance.now();
+          handles = await createParallelLLMStreams(params.prompt, {
+            maxOutputTokens: params.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
+            sessionId: params.sessionId,
+            systemInstruction: params.systemInstruction,
+            enableGrounding: params.enableGrounding,
+          });
+          const modelConnectMs = Math.round(performance.now() - connectStarted);
+          if (cancelled) return;
+
+          // Tell the frontend how many slots are active and which providers they map to
+          controller.enqueue(sse("parallel_init", {
+            slots: handles.map((h) => ({ slot: h.slot, provider: h.provider, model: h.model })),
+            modelConnectMs,
+            preModelMs,
+            ...params.preGenerationMetrics,
+          }));
+
+          // Stream each handle in its own microtask — they run concurrently
+          const streamSlot = async (handle: ParallelStreamHandle) => {
+            const slot = handle.slot.toLowerCase(); // "a" or "b"
+            let firstChunkAt: number | null = null;
+            let firstTokenAt: number | null = null;
+            let outputChars = 0;
+            let emittedText = false;
+            let inputTokens: number | undefined;
+            let outputTokens: number | undefined;
+            let totalTokens: number | undefined;
+            let cachedInputTokens: number | undefined;
+            let thoughtTokens: number | undefined;
+            let serviceTierActual: string | undefined;
+
+            try {
+              controller.enqueue(sse(`meta_${slot}`, {
+                requestId: params.requestId,
+                slot: handle.slot,
+                provider: handle.provider,
+                model: handle.model,
+                question: params.question,
+                preModelMs,
+                attemptCount: handle.diagnostics?.attemptCount ?? 1,
+                attemptedTargets: handle.diagnostics?.attemptedTargets ?? [`${handle.provider}:${handle.model}`],
+                thinkingLevel: handle.diagnostics?.thinkingLevel,
+              }));
+
+              const streamIterationStarted = performance.now();
+              let groundingData: { searchQueries: string[]; sources: { uri?: string; title?: string; text?: string }[] } | null = null;
+
+              for await (const chunk of handle.stream) {
+                if (cancelled) break;
+                if (!firstChunkAt) firstChunkAt = performance.now();
+                if (chunk.usage?.inputTokens != null) inputTokens = chunk.usage.inputTokens;
+                if (chunk.usage?.outputTokens != null) outputTokens = chunk.usage.outputTokens;
+                if (chunk.usage?.totalTokens != null) totalTokens = chunk.usage.totalTokens;
+                if (chunk.usage?.cachedInputTokens != null) cachedInputTokens = chunk.usage.cachedInputTokens;
+                if (chunk.usage?.thoughtTokens != null) thoughtTokens = chunk.usage.thoughtTokens;
+                if (chunk.usage?.serviceTierActual) serviceTierActual = chunk.usage.serviceTierActual;
+                if (chunk.grounding) {
+                  if (!groundingData) groundingData = { searchQueries: [], sources: [] };
+                  if (chunk.grounding.searchQueries.length > 0) groundingData.searchQueries = chunk.grounding.searchQueries;
+                  if (chunk.grounding.sources.length > 0) groundingData.sources.push(...chunk.grounding.sources);
+                }
+                if (!chunk.text) continue;
+                if (!firstTokenAt) {
+                  firstTokenAt = performance.now();
+                  controller.enqueue(sse(`status_${slot}`, { stage: "streaming", message: `Streaming from ${handle.provider}…` }));
+                }
+                emittedText = true;
+                outputChars += chunk.text.length;
+                controller.enqueue(sse(`delta_${slot}`, { text: chunk.text, slot: handle.slot }));
+              }
+
+              if (!emittedText) {
+                const fallbackText = "I could not generate a useful response for that question.";
+                if (!firstChunkAt) firstChunkAt = performance.now();
+                if (!firstTokenAt) firstTokenAt = performance.now();
+                outputChars += fallbackText.length;
+                controller.enqueue(sse(`delta_${slot}`, { text: fallbackText, slot: handle.slot }));
+              }
+
+              if (groundingData && (groundingData.searchQueries.length > 0 || groundingData.sources.length > 0)) {
+                const seen = new Set<string>();
+                const uniqueSources = groundingData.sources.filter((s) => {
+                  const key = s.uri || s.title || "";
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                });
+                controller.enqueue(sse(`grounding_${slot}`, {
+                  searchQueries: groundingData.searchQueries,
+                  sources: uniqueSources,
+                  wasGrounded: uniqueSources.length > 0,
+                  slot: handle.slot,
+                }));
+              }
+
+              const completedAt = performance.now();
+              const estimatedTokens = outputTokens ?? Math.max(1, Math.round(outputChars / 4));
+              const generationMs = firstTokenAt ? Math.max(1, completedAt - firstTokenAt) : 0;
+              const firstChunkDelayMs = firstChunkAt ? Math.round(firstChunkAt - streamIterationStarted) : null;
+
+              const metrics = {
+                requestId: params.requestId,
+                slot: handle.slot,
+                provider: handle.provider,
+                model: handle.model,
+                serverTtftMs: firstTokenAt ? Math.round(firstTokenAt - params.requestStarted) : null,
+                generationMs: Math.round(generationMs),
+                totalMs: Math.round(completedAt - params.requestStarted),
+                inputTokens,
+                cachedInputTokens,
+                thoughtTokens,
+                outputTokens: estimatedTokens,
+                totalTokens,
+                tokensPerSecond: generationMs > 0 ? Number((estimatedTokens / (generationMs / 1000)).toFixed(1)) : null,
+                tokenCountEstimated: outputTokens == null,
+                serviceTierActual,
+              };
+              console.info(JSON.stringify({ event: `completion.metrics.${slot}`, ...metrics }));
+              controller.enqueue(sse(`metrics_${slot}`, metrics));
+              controller.enqueue(sse(`done_${slot}`, { requestId: params.requestId, slot: handle.slot }));
+            } catch (error: any) {
+              if (!cancelled) {
+                console.error(`[completion:${params.requestId}:${slot}] stream failed`, error);
+                try {
+                  controller.enqueue(sse(`error_${slot}`, {
+                    message: `Model ${handle.provider}/${handle.model} failed. ${error?.message || ""}`.trim(),
+                    slot: handle.slot,
+                  }));
+                } catch { /* client disconnected */ }
+              }
+            }
+          };
+
+          // Also emit web citations once
+          if (params.webResults.length > 0) {
+            controller.enqueue(sse("sources", { citations: webCitations(params.webResults) }));
+          }
+
+          // Run all slots concurrently
+          await Promise.allSettled(handles.map((h) => streamSlot(h)));
+          controller.enqueue(sse("done", { requestId: params.requestId }));
+        } catch (error: any) {
+          if (!cancelled) {
+            console.error(`[completion:${params.requestId}] parallel stream failed`, error);
+            try {
+              controller.enqueue(sse("error", {
+                message: "All model requests failed. Please retry.",
+                details: error?.message,
+              }));
+            } catch { /* client disconnected */ }
+          }
+        } finally {
+          try { controller.close(); } catch { /* already closed */ }
+        }
+      };
+
+      void run();
+    },
+    cancel() {
+      cancelled = true;
     },
   });
 

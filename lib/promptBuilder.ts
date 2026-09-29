@@ -88,14 +88,21 @@ export function buildAnswerSystemInstruction(
     ? `\n- Protected relevant project evidence is available. Include ONE concise first-person reference and explicitly connect the implementation pattern to the current problem.`
     : "";
 
-  const coreRules = template.callType === "taking_interview"
+  const coreRules = template.id === "taking-course-interview-v10"
+    ? CORE_QUALITY_RULES.replace(
+        "- Output only the content the local user should say next.",
+        "- Provide warm, encouraging candidate evaluation, supportive spoken follow-ups, and course placement intelligence.",
+      )
+    : template.callType === "taking_interview"
     ? CORE_QUALITY_RULES.replace(
         "- Output only the content the local user should say next.",
         "- Provide actionable interviewer analysis/fact-checking alongside the spoken follow-up options.",
       )
     : CORE_QUALITY_RULES;
 
-  const sectionLabelingRule = template.callType === "taking_interview"
+  const sectionLabelingRule = template.id === "taking-course-interview-v10"
+    ? "- Clearly label the 3 sections (1. Encouragement & Answer Evaluation, 2. Supportive Follow-Up / Guided Probe, 3. Course Track Placement Intel & Pivot)."
+    : template.callType === "taking_interview"
     ? "- Clearly label the 3 sections (1. Evaluation & Fact-Check, 2. Primary Follow-Up Question, 3. Topic-Switch Follow-Up Question)."
     : "- Do not mechanically label every section; make the response sound natural when spoken.";
 
@@ -134,6 +141,7 @@ export function buildAnswerPromptDetailed(params: {
   candidateNotesMaxChars?: number;
   recentConversationMaxChars?: number;
   answerProfile?: AnswerProfile;
+  courseGuide?: string;
 }): AnswerPromptBuildResult {
   const callType = normalizeCallType(params.sessionInfo?.callType);
   const template = getCallPromptTemplate(params.sessionInfo);
@@ -152,7 +160,13 @@ export function buildAnswerPromptDetailed(params: {
     blocks.push(`<${tag}>\n${params.candidateContext}\n</${tag}>`);
   }
   if (sessionContextText) blocks.push(`<SESSION_CONTEXT_DATA>\n${sessionContextText}\n</SESSION_CONTEXT_DATA>`);
-  if (candidateNotes && callType !== "taking_interview") blocks.push(`<PERSONAL_NOTES_DATA>\n${candidateNotes}\n</PERSONAL_NOTES_DATA>`);
+  if (candidateNotes) {
+    const tag = callType === "taking_interview" ? "INTERVIEWER_NOTES_DATA" : "PERSONAL_NOTES_DATA";
+    blocks.push(`<${tag}>\n${candidateNotes}\n</${tag}>`);
+  }
+  if (params.courseGuide?.trim()) {
+    blocks.push(`<COURSE_INTERVIEW_GUIDE_DATA>\n${params.courseGuide.trim()}\n</COURSE_INTERVIEW_GUIDE_DATA>`);
+  }
   if (params.preparedQaGuidance?.trim() && callType === "giving_interview") blocks.push(`<PREPARED_QA_GUIDANCE_DATA>\n${params.preparedQaGuidance.trim()}\n</PREPARED_QA_GUIDANCE_DATA>`);
   if (memory.summary || memory.currentTopic || memory.facts.length || memory.decisions.length || memory.openQuestions.length || memory.entities.length) blocks.push(`<MEETING_MEMORY_DATA>\n${memoryText}\n</MEETING_MEMORY_DATA>`);
   if (recentConversationText) blocks.push(`<RECENT_CONVERSATION_DATA>\n${recentConversationText}\n</RECENT_CONVERSATION_DATA>`);

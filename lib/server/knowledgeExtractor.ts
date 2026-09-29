@@ -138,7 +138,7 @@ async function callExtractor(documentText: string, documentType: KnowledgeDocume
   if (!apiKey) throw new Error("GEMINI_API_KEY is required to build the Candidate Knowledge Pack");
 
   const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: process.env.GEMINI_API_VERSION || "v1" } });
-  const model = process.env.KNOWLEDGE_EXTRACTION_MODEL || "gemini-3.6-flash";
+  const model = process.env.KNOWLEDGE_EXTRACTION_MODEL || "gemini-3.5-flash-lite";
 
   const systemInstruction = KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT;
   const prompt = buildKnowledgeExtractionPrompt(documentType, documentText.slice(0, MAX_DOCUMENT_CHARS));

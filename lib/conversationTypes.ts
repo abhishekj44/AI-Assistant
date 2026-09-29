@@ -36,4 +36,5 @@ export interface SessionInfo {
   company: string;
   callType: CallType;
   details: string;
+  modeVariant?: "standard" | "course_admission";
 }

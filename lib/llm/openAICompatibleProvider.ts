@@ -96,9 +96,12 @@ export async function createOpenAICompatibleStream(
       { role: "user", content: prompt },
     ],
     stream: true,
-    max_completion_tokens: options.maxOutputTokens ?? 320,
+    max_tokens: options.maxOutputTokens ?? 420,
   };
-  if (/gpt-oss/i.test(config.model)) requestBody.reasoning_effort = "low";
+  if (/gpt-oss/i.test(config.model)) {
+    requestBody.reasoning_effort = "low";
+    requestBody.max_completion_tokens = options.maxOutputTokens ?? 420;
+  }
 
   // These are optional optimizations; only send them when explicitly enabled.
   if (provider === "cerebras" && process.env.CEREBRAS_PROMPT_CACHE_ENABLED === "true" && options.sessionId) {
@@ -113,6 +116,11 @@ export async function createOpenAICompatibleStream(
 
   let response: Response;
   try {
+    const timeoutMs = (() => {
+      const parsed = Number(process.env.LLM_CONNECT_TIMEOUT_MS);
+      return Number.isFinite(parsed) ? Math.max(5_000, Math.min(Math.round(parsed), 90_000)) : 45_000;
+    })();
+
     response = await fetch(config.endpoint, {
       method: "POST",
       headers: {
@@ -120,10 +128,7 @@ export async function createOpenAICompatibleStream(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout((() => {
-        const parsed = Number(process.env.LLM_CONNECT_TIMEOUT_MS);
-        return Number.isFinite(parsed) ? Math.max(1_000, Math.min(Math.round(parsed), 20_000)) : 8_000;
-      })()),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error: any) {
     throw new LLMProviderError({

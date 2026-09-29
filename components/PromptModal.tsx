@@ -19,6 +19,7 @@ import {
   Code2,
   FileText,
   HelpCircle,
+  GraduationCap,
 } from "lucide-react";
 
 interface PromptModalProps {
@@ -170,15 +171,33 @@ export function PromptModal({
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
                   Optional Style Preferences
                 </Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleResetDefaults}
-                  className="h-7 px-2 text-[11px] text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800"
-                >
-                  <RotateCcw className="w-3 h-3 mr-1" /> Reset Defaults
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setLocalRules(`- Tone: Extremely motivating, warm, and supportive. The candidate is being interviewed for course admission, not a job rejection.
+- Encouragement: Actively praise sound instincts, curiosity, and practical problem-solving attempts.
+- Normalizing errors: If an answer is inaccurate, frame it constructively and normalize it before asking a gentle, guided follow-up.
+- Placement orientation: Focus follow-ups on understanding their learning trajectory and track fit (IIT Roorkee, IIT Kharagpur, IITM Pravartak, FDE Base, Pro).
+- Scaffolded hints: When the candidate is hesitant or nervous, suggest a friendly hint or scaffolded prompt to help them think out loud.`);
+                    }}
+                    className="h-7 px-2 text-[11px] text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40 border border-emerald-500/30"
+                    title="Load supportive tone rules for course admission"
+                  >
+                    <GraduationCap className="w-3 h-3 mr-1" /> Course Mentoring Preset
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleResetDefaults}
+                    className="h-7 px-2 text-[11px] text-slate-400 hover:text-indigo-300 hover:bg-slate-900 border border-slate-800"
+                  >
+                    <RotateCcw className="w-3 h-3 mr-1" /> Reset Defaults
+                  </Button>
+                </div>
               </div>
               <p className="text-[11px] text-slate-400">
                 V10 core quality rules and the selected call-type prompt are versioned and always applied. These preferences only adjust tone/format and cannot replace the core answer contract.
@@ -198,16 +217,22 @@ export function PromptModal({
             <div className="space-y-3 animate-in fade-in duration-150">
               <Label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-indigo-400" />
-                Personal / Candidate Context
+                {sessionInfo?.callType === "taking_interview" ? "Interviewer Notes & Candidate Context" : "Personal / Candidate Context"}
               </Label>
               <p className="text-[11px] text-slate-400">
-                Use this for optional personal background that is not already in the structured Knowledge Pack. It is ignored in Taking Interview mode so interviewer follow-ups are not biased by your own candidate profile.
+                {sessionInfo?.callType === "taking_interview"
+                  ? "In Taking Interview mode, use this to note details about the candidate (e.g. background, university, target track, or specific questions you want to ask). It is provided to the assistant as interviewer reference context."
+                  : "Use this for optional personal background that is not already in the structured Knowledge Pack."}
               </p>
               <Textarea
                 rows={9}
                 value={localBg}
                 onChange={(e) => setLocalBg(e.target.value)}
-                placeholder="e.g. Senior Software Engineer with 6+ years in Distributed Systems, Node.js, Next.js, agentic AI, and Azure..."
+                placeholder={
+                  sessionInfo?.callType === "taking_interview"
+                    ? "e.g. Candidate: Rahul, 3rd year B.Tech CS, applied for IIT Kharagpur AI Engineering track. Ask about data pipelines and GenAI curiosity..."
+                    : "e.g. Senior Software Engineer with 6+ years in Distributed Systems, Node.js, Next.js, agentic AI, and Azure..."
+                }
                 className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-slate-200 font-mono text-xs leading-relaxed focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
               />
             </div>

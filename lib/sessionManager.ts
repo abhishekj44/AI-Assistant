@@ -106,6 +106,18 @@ class SessionManager {
     return info ? { ...info, callType: normalizeCallType(info.callType) } : undefined;
   }
 
+  updateSessionInfo(info: Partial<SessionInfo>) {
+    if (!this.activeSession) return;
+    this.activeSession.sessionInfo = {
+      ...(this.activeSession.sessionInfo || { company: "", callType: "taking_interview", details: "" }),
+      ...info,
+    };
+    this.saveToStorage();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(SESSION_INFO_EVENT, { detail: this.activeSession.sessionInfo }));
+    }
+  }
+
   getFullTranscriptString(): string {
     return (this.activeSession?.transcripts || [])
       .map((turn) => `${turn.speaker === "me" ? "ME" : "INTERVIEWER"}: ${turn.text}`)
