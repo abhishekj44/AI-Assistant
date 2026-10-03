@@ -91,7 +91,7 @@ export function buildAnswerSystemInstruction(
   const coreRules = template.id === "taking-course-interview-v10"
     ? CORE_QUALITY_RULES.replace(
         "- Output only the content the local user should say next.",
-        "- Provide warm, encouraging candidate evaluation, supportive spoken follow-ups, and course placement intelligence.",
+        "- Output the structured 5-category evaluation with scores, actionable justifications, and the final placement summary.",
       )
     : template.callType === "taking_interview"
     ? CORE_QUALITY_RULES.replace(
@@ -101,7 +101,7 @@ export function buildAnswerSystemInstruction(
     : CORE_QUALITY_RULES;
 
   const sectionLabelingRule = template.id === "taking-course-interview-v10"
-    ? "- Clearly label the 3 sections (1. Encouragement & Answer Evaluation, 2. Supportive Follow-Up / Guided Probe, 3. Course Track Placement Intel & Pivot)."
+    ? "- Clearly format each of the 5 categories (Score: /10 with brief justification) and conclude with the 🎯 Final Placement Summary (Total Score: /50, Recommended Track, Key Placement Notes)."
     : template.callType === "taking_interview"
     ? "- Clearly label the 3 sections (1. Evaluation & Fact-Check, 2. Primary Follow-Up Question, 3. Topic-Switch Follow-Up Question)."
     : "- Do not mechanically label every section; make the response sound natural when spoken.";
