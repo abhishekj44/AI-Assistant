@@ -1,16 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-
-let cachedGuide: string | null = null;
+import { SettingsRepository } from "./repositories/settingsRepository";
 
 export async function readCourseInterviewGuide(): Promise<string> {
-  if (cachedGuide) return cachedGuide;
+  const repository = new SettingsRepository();
+  const existing = repository.get("courseInterviewGuide");
+  if (existing) return String(existing.value);
   try {
     const guidePath = path.join(process.cwd(), "data", "course-interview-guide.md");
-    cachedGuide = await fs.readFile(guidePath, "utf-8");
-    return cachedGuide;
-  } catch (error) {
-    console.error("Failed to read course-interview-guide.md", error);
-    return "";
-  }
+    return repository.seedDocument("courseInterviewGuide", await fs.readFile(guidePath, "utf-8"));
+  } catch { return ""; }
 }

@@ -142,6 +142,21 @@ export function buildQuestionBundle(
   };
 }
 
+export function buildCandidateResponseBundle(
+  turns: Array<Pick<TranscriptTurn, "id" | "speaker" | "text" | "timestamp">>,
+  options: QuestionBundleOptions = {},
+): QuestionBundle | null {
+  let lastRemoteIndex = -1;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (turns[index].speaker === "interviewer" && turns[index].text.trim()) { lastRemoteIndex = index; break; }
+  }
+  const remoteTurns = lastRemoteIndex < 0 ? [] : turns.slice(0, lastRemoteIndex + 1);
+  const bundle = buildQuestionBundle(remoteTurns, options);
+  if (!bundle) return null;
+  return { ...bundle, primaryAsk: clip(bundle.interviewerBlock, 1_400), scenarioContext: "",
+    retrievalQuery: clip(bundle.interviewerBlock, 3_600), primaryAskConfidence: "fallback" };
+}
+
 export function sanitizeQuestionBundle(value: unknown): QuestionBundle | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;

@@ -5,6 +5,7 @@ import { CheckCircle2, History, Loader2, Sparkles, ThumbsDown, ThumbsUp } from "
 import { Button } from "@/components/ui/button";
 import type { CallType } from "@/lib/callTypes";
 import { callTypeLabel } from "@/lib/callTypes";
+import { isCompletedOutput } from "@/lib/types";
 
 interface QAHistoryEntry {
   id: string;
@@ -14,7 +15,11 @@ interface QAHistoryEntry {
   tag: string;
   feedback?: "good" | "poor";
   promotedAt?: string;
-  callType: CallType;
+  callType?: CallType;
+  status?: string;
+  provider?: string;
+  model?: string;
+  slot?: string;
 }
 
 export function QAHistoryManager() {
@@ -36,6 +41,8 @@ export function QAHistoryManager() {
   useEffect(() => { void load(); }, []);
 
   const rate = async (id: string, feedback: "good" | "poor") => {
+    const target = entries.find((entry) => entry.id === id);
+    if (!target || !isCompletedOutput(target.answer, true, false, target)) return;
     setBusyId(id);
     try {
       const response = await fetch("/api/qa-history", {
@@ -58,6 +65,8 @@ export function QAHistoryManager() {
   };
 
   const promote = async (id: string) => {
+    const target = entries.find((entry) => entry.id === id);
+    if (!target || !isCompletedOutput(target.answer, true, false, target) || target.feedback !== "good" || !target.question || target.promotedAt) return;
     setBusyId(id);
     try {
       const response = await fetch("/api/qa-history", {
@@ -92,13 +101,13 @@ export function QAHistoryManager() {
             <div key={entry.id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="text-xs font-medium text-slate-200 line-clamp-2">{entry.question || "Generated summary"}</div>
-                <span className="shrink-0 rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-[9px] text-slate-500">{callTypeLabel(entry.callType)}</span>
+                <span className="shrink-0 rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-[9px] text-slate-500">{entry.callType ? callTypeLabel(entry.callType) : entry.provider || "Response"} · {entry.status || "COMPLETED"}{entry.slot ? ` · ${entry.slot}` : ""}</span>
               </div>
               <div className="mt-1 line-clamp-2 text-[11px] text-slate-500">{entry.answer}</div>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <Button type="button" variant="ghost" size="sm" disabled={busyId === entry.id || Boolean(entry.promotedAt)} onClick={() => void rate(entry.id, "good")} className={`h-7 px-2 text-[10px] ${entry.feedback === "good" ? "bg-emerald-500/10 text-emerald-300" : "text-slate-500"}`}><ThumbsUp className="mr-1 h-3 w-3" /> Good</Button>
-                <Button type="button" variant="ghost" size="sm" disabled={busyId === entry.id || Boolean(entry.promotedAt)} onClick={() => void rate(entry.id, "poor")} className={`h-7 px-2 text-[10px] ${entry.feedback === "poor" ? "bg-rose-500/10 text-rose-300" : "text-slate-500"}`}><ThumbsDown className="mr-1 h-3 w-3" /> Poor</Button>
-                {entry.callType === "giving_interview" && <Button type="button" variant="ghost" size="sm" disabled={busyId === entry.id || entry.feedback !== "good" || Boolean(entry.promotedAt) || !entry.question} onClick={() => void promote(entry.id)} className="h-7 px-2 text-[10px] text-violet-300 disabled:text-slate-700">
+                <Button type="button" variant="ghost" size="sm" disabled={busyId === entry.id || Boolean(entry.promotedAt) || !isCompletedOutput(entry.answer, true, false, entry)} onClick={() => void rate(entry.id, "good")} className={`h-7 px-2 text-[10px] ${entry.feedback === "good" ? "bg-emerald-500/10 text-emerald-300" : "text-slate-500"}`}><ThumbsUp className="mr-1 h-3 w-3" /> Good</Button>
+                <Button type="button" variant="ghost" size="sm" disabled={busyId === entry.id || Boolean(entry.promotedAt) || !isCompletedOutput(entry.answer, true, false, entry)} onClick={() => void rate(entry.id, "poor")} className={`h-7 px-2 text-[10px] ${entry.feedback === "poor" ? "bg-rose-500/10 text-rose-300" : "text-slate-500"}`}><ThumbsDown className="mr-1 h-3 w-3" /> Poor</Button>
+                {(!entry.callType || entry.callType === "giving_interview") && <Button type="button" variant="ghost" size="sm" disabled={busyId === entry.id || entry.feedback !== "good" || Boolean(entry.promotedAt) || !entry.question || !isCompletedOutput(entry.answer, true, false, entry)} onClick={() => void promote(entry.id)} className="h-7 px-2 text-[10px] text-violet-300 disabled:text-slate-700">
                   {busyId === entry.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : entry.promotedAt ? <CheckCircle2 className="mr-1 h-3 w-3" /> : <Sparkles className="mr-1 h-3 w-3" />}{entry.promotedAt ? "Promoted" : "Promote to Q&A"}
                 </Button>}
               </div>

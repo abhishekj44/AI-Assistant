@@ -1,5 +1,7 @@
-import fs from "node:fs/promises";
-import path from "node:path";
+import { getDatabase } from "./db/connection";
+import { DEFAULT_KNOWLEDGE_BASE_ID } from "./db/migrations";
+import { knowledgeBaseRepository } from "./repositories/knowledgeBaseRepository";
+import { KnowledgeRepository, type KnowledgeDocumentData } from "./repositories/knowledgeRepository";
 import {
   EMPTY_KNOWLEDGE_PACK,
   type CandidateExperience,
@@ -9,11 +11,10 @@ import {
   type KnowledgeSource,
 } from "@/lib/knowledge/types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const PACK_PATH = path.join(DATA_DIR, "candidate-knowledge.json");
-
 let cachedPack: CandidateKnowledgePack | null = null;
-let cachedPackMtimeMs = -1;
+let cachedRevision = -1;
+let cachedBaseId = "";
+let cachedDatabase: ReturnType<typeof getDatabase> | null = null;
 let lastReadWasCacheHit = false;
 
 function uniqueStrings(items: Array<string | undefined | null>): string[] {
@@ -134,90 +135,49 @@ export interface KnowledgePackReadResult {
   cacheHit: boolean;
 }
 
-export async function readKnowledgePackWithMeta(): Promise<KnowledgePackReadResult> {
-  try {
-    const stat = await fs.stat(PACK_PATH);
-    if (cachedPack && cachedPackMtimeMs === stat.mtimeMs) {
-      lastReadWasCacheHit = true;
-      return { pack: cachedPack, cacheHit: true };
-    }
-
-    const raw = await fs.readFile(PACK_PATH, "utf8");
-    const parsed = JSON.parse(raw) as CandidateKnowledgePack;
-    if (!parsed || !Array.isArray(parsed.sources)) throw new Error("Invalid knowledge pack format");
-    cachedPack = parsed;
-    cachedPackMtimeMs = stat.mtimeMs;
-    lastReadWasCacheHit = false;
-    return { pack: parsed, cacheHit: false };
-  } catch (error: any) {
-    if (error?.code !== "ENOENT") console.warn("[knowledge] failed to read pack, using empty pack:", error?.message);
-    const empty = { ...EMPTY_KNOWLEDGE_PACK, updatedAt: new Date(0).toISOString() };
-    cachedPack = empty;
-    cachedPackMtimeMs = -1;
-    lastReadWasCacheHit = false;
-    return { pack: empty, cacheHit: false };
-  }
+export async function readKnowledgePackWithMeta(baseId = DEFAULT_KNOWLEDGE_BASE_ID): Promise<KnowledgePackReadResult> {
+  knowledgeBaseRepository.require(baseId);
+  const database = getDatabase();
+  const repository = new KnowledgeRepository(database);
+  const revision = repository.revision(baseId);
+  lastReadWasCacheHit = cachedDatabase === database && cachedBaseId === baseId && cachedRevision === revision && cachedPack !== null;
+  if (!lastReadWasCacheHit) cachedPack = repository.getPack(baseId);
+  cachedBaseId = baseId;
+  cachedDatabase = database;
+  cachedRevision = revision;
+  return { pack: structuredClone(cachedPack!), cacheHit: lastReadWasCacheHit };
 }
 
-export async function readKnowledgePack(): Promise<CandidateKnowledgePack> {
-  return (await readKnowledgePackWithMeta()).pack;
+export async function readKnowledgePack(baseId = DEFAULT_KNOWLEDGE_BASE_ID): Promise<CandidateKnowledgePack> {
+  return (await readKnowledgePackWithMeta(baseId)).pack;
 }
 
 export function wasLastKnowledgeReadCacheHit(): boolean {
   return lastReadWasCacheHit;
 }
 
-export async function writeKnowledgePack(pack: CandidateKnowledgePack): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const tempPath = `${PACK_PATH}.${process.pid}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(pack, null, 2), "utf8");
-  await fs.rename(tempPath, PACK_PATH);
-  const stat = await fs.stat(PACK_PATH);
-  cachedPack = pack;
-  cachedPackMtimeMs = stat.mtimeMs;
-  lastReadWasCacheHit = true;
+export async function writeKnowledgePack(pack: CandidateKnowledgePack, baseId = DEFAULT_KNOWLEDGE_BASE_ID): Promise<void> {
+  knowledgeBaseRepository.require(baseId);
+  new KnowledgeRepository().replacePack(pack, baseId, true);
 }
 
 
-export async function replaceKnowledgePack(pack: CandidateKnowledgePack): Promise<CandidateKnowledgePack> {
-  const normalized: CandidateKnowledgePack = {
-    ...pack,
-    version: Math.max(2, Number(pack.version) || 2),
-    updatedAt: new Date().toISOString(),
-    profile: pack.profile || { strengths: [] },
-    experience: Array.isArray(pack.experience) ? pack.experience : [],
-    projects: mergeProjects(Array.isArray(pack.projects) ? pack.projects : []),
-    skills: uniqueStrings(Array.isArray(pack.skills) ? pack.skills : []),
-    achievements: uniqueStrings(Array.isArray(pack.achievements) ? pack.achievements : []),
-    facts: uniqueStrings(Array.isArray(pack.facts) ? pack.facts : []),
-    sources: Array.isArray(pack.sources) ? pack.sources : [],
-  };
-  await writeKnowledgePack(normalized);
-  return normalized;
+export async function replaceKnowledgePack(pack: CandidateKnowledgePack, baseId = DEFAULT_KNOWLEDGE_BASE_ID): Promise<CandidateKnowledgePack> {
+  knowledgeBaseRepository.require(baseId);
+  return new KnowledgeRepository().replacePack(pack, baseId);
 }
 
-export async function addKnowledgeSource(source: KnowledgeSource): Promise<CandidateKnowledgePack> {
-  const current = await readKnowledgePack();
-  // Replace a document with the same type/name to avoid stale duplicated facts.
-  const remaining = current.sources.filter(
-    (item) => !(item.filename.toLowerCase() === source.filename.toLowerCase() && item.type === source.type),
-  );
-  const pack = rebuildPackFromSources([...remaining, source]);
-  await writeKnowledgePack(pack);
-  return pack;
+export async function addKnowledgeSource(source: KnowledgeSource, documentData?: KnowledgeDocumentData, baseId = DEFAULT_KNOWLEDGE_BASE_ID): Promise<CandidateKnowledgePack> {
+  knowledgeBaseRepository.require(baseId);
+  return new KnowledgeRepository().addSource(source, baseId, documentData);
 }
 
-export async function deleteKnowledgeSource(sourceId: string): Promise<CandidateKnowledgePack> {
-  const current = await readKnowledgePack();
-  const nextSources = current.sources.filter((source) => source.id !== sourceId);
-  if (nextSources.length === current.sources.length) throw new Error("Knowledge source not found");
-  const pack = rebuildPackFromSources(nextSources);
-  await writeKnowledgePack(pack);
-  return pack;
+export async function deleteKnowledgeSource(sourceId: string, baseId = DEFAULT_KNOWLEDGE_BASE_ID): Promise<CandidateKnowledgePack> {
+  knowledgeBaseRepository.require(baseId);
+  return new KnowledgeRepository().deleteSource(sourceId, baseId);
 }
 
-export async function clearKnowledgePack(): Promise<CandidateKnowledgePack> {
-  const empty = { ...EMPTY_KNOWLEDGE_PACK, updatedAt: new Date().toISOString() };
-  await writeKnowledgePack(empty);
-  return empty;
+export async function clearKnowledgePack(baseId = DEFAULT_KNOWLEDGE_BASE_ID): Promise<CandidateKnowledgePack> {
+  knowledgeBaseRepository.require(baseId);
+  return new KnowledgeRepository().clear(baseId);
 }

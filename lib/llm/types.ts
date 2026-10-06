@@ -5,6 +5,7 @@ export interface LLMRequestOptions {
   sessionId?: string;
   systemInstruction?: string;
   enableGrounding?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface LLMUsage {

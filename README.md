@@ -1,283 +1,296 @@
 # AI Meeting Copilot
 
-Low-latency, speaker-aware meeting/interview assistant built with Next.js, Deepgram streaming STT, a local Candidate Knowledge Pack, and pluggable LLM inference.
+An assistant for interviews and meetings. It turns live audio into text and suggests answers or follow-up questions using your documents and prepared Q&A.
 
-## What changed from the previous architecture
+## What Is New
 
-The latency-critical answer path no longer uses Pinecone, query embeddings, a question-extraction LLM, or a reranker.
+- **One local database:** sessions, transcripts, summaries, knowledge, Q&A, answers, prompts, chat and settings now use SQLite instead of separate JSON files.
+- **Fast local search:** SQLite FTS5 finds relevant knowledge by words, phrases and technical terms. No Pinecone account or separate vector database is needed.
+- **One saved resume:** Giving Interview automatically uses your resume from the default Candidate Knowledge base. You enter the job description for that interview.
+- **Candidate-specific setup:** Taking Interview asks for a fresh candidate profile and uses the candidate's responses together with your questions and both speakers' conversation. Shared audio and your microphone are required; your own resume and personal Q&A are excluded.
+- **Per-session interview context:** job descriptions and candidate profiles are saved with the relevant session and included in answers, rolling memory and summaries, not reused as global preferences.
+- **Separate reference bases:** additional knowledge bases remain available for meeting/reference material; interview setup no longer asks you to choose a resume.
+- **Continuous saving:** finalized speech is saved during the call. Summaries are generated afterwards without delaying transcript saving.
+- **Editable prompts:** each call type has its own prompt. Saving an edit creates a new version.
+- **Safer history:** completed and interrupted answers are kept separate. Generated answers become prepared Q&A only after you approve and promote them.
+- **Local data tools:** view old sessions, download backups and rebuild the search index from **Knowledge & Q&A > Local Data**.
 
-```text
-System audio ──> Deepgram ──> INTERVIEWER turns ──┐
-                                                  ├─> structured conversation state
-Microphone (optional) ──> Deepgram ──> ME turns ─┘
-                                                        │
-                         rolling meeting memory <───────┤  (background only)
-                                                        │
-Resume/JD/projects ──> one-time extraction ──> Candidate Knowledge Pack
-Prepared Q&A ──> local Q&A Bank ──> top-match guidance ────────────┤
-                                                        │
-                                           Generate Answer
-                                                        │
-                         QuestionBundle + AnswerContract (local only)
-                                                        │
-                               Evidence Capsule selection (in-process)
-                                                        │
-                            optional fresh-web lookup only when required
-                                                        │
-                                   Gemini / Cerebras / Groq
-                                                        │
-                                          typed SSE stream
-                                                        │
-                              TTFT + tokens/sec + total latency
+The database is created automatically at `data/copilot.db`. You do not need to install SQLite separately.
+
+**Local storage does not mean offline AI.** Audio transcription and AI responses still use online providers and may incur charges. API keys stay in your environment file, not the database. Raw audio and video are not saved.
+
+## Setup On A New Device
+
+The commands below are for **Windows PowerShell**. On macOS/Linux, use `npm` instead of `npm.cmd`, and `cp` instead of `Copy-Item`.
+
+### 1. Install The Requirements
+
+- [Node.js](https://nodejs.org/) version **22 or newer**, including npm.
+- [Git](https://git-scm.com/downloads), if you will clone the project.
+- Chrome or Edge for system/tab audio capture.
+- A Deepgram API key with **Member-or-higher** permission.
+- A Gemini API key for the default AI model, document extraction and meeting memory.
+
+Cerebras/Groq for alternative answers and Tavily for web search are optional. No Docker or database server is required.
+
+### 2. Get The Project And Install Packages
+
+Use the project version that contains this database update. Changes that exist only on your old device must be transferred or pushed before a new clone can include them.
+
+```powershell
+git clone https://github.com/abhishekj44/AI-Assistant.git
+cd AI-Assistant
+npm.cmd ci
+Copy-Item .env.example .env.local
 ```
 
-## Core design decisions
+If you transfer the project folder instead, do not transfer `node_modules` or `.next`. Run `npm.cmd ci` on the new device. Move your data separately using the import or backup instructions below.
 
-- **Optional dual-speaker transcription:** system audio is always tagged `interviewer`; microphone audio is tagged `me` only when the user enables **Capture my microphone**. Interviewer-only mode never requests microphone permission.
-- **Structured turns, not raw transcript strings:** every utterance has an ID, sequence, speaker, timestamps and confidence.
-- **QuestionBundle reconstruction:** long interviewer scenarios survive natural pauses; Generate Answer separates the actual ask from the scenario constraints without a question-extraction LLM.
-- **Deterministic AnswerContract:** complex troubleshooting/architecture requests get diagnosis, implementation, validation, a relevant project example, and a trade-off without adding another model call.
-- **Candidate Knowledge Pack:** resume/JD/project documents are converted once into compact factual structured context, including source-supported project examples and search-only answer hooks.
-- **No vector DB on the normal answer path:** local lexical selection chooses the most relevant projects/experience in milliseconds.
-- **Optional Prepared Q&A guidance:** a separate local Q&A Bank can provide high-value answer/key-point guidance; only the top matches are injected, and Candidate Knowledge remains authoritative for personal facts.
-- **Follow-up aware selection:** recent conversation, current meeting topic and entities are included in local relevance matching, so questions like “why did you choose that?” can resolve the referenced project.
-- **Background meeting memory:** every few finalized turns, a compact summary/facts/entities state is refreshed without blocking Generate Answer.
-- **Strict web routing:** Tavily is called only for explicit freshness signals such as “latest”, “today”, or “current version”.
-- **Dynamic live-answer length:** simple questions stay short, while architecture/troubleshooting/project questions can expand when needed for diagnosis, validation and implementation clarity.
-- **Evidence Capsule:** a strong project match sends the protected project example/decision rather than broad unrelated profile data.
-- **Versioned core prompt rules:** user settings can change style, but cannot replace V9 quality/grounding rules.
-- **Session-aware depth:** Company / Call Type / Details are passed as small bounded context on Generate Answer.
-- **Approved-answer learning:** generated history stays separate from Prepared Q&A; only a user-marked Good answer can be promoted.
-- **Provider abstraction:** Gemini is the default; Cerebras and Groq can be selected with environment variables for latency benchmarking.
-- **No retry sleeps:** only transient 429/5xx/network startup failures can fail over, and the critical path is capped at two provider/model attempts.
-- **Measured performance:** the UI displays client TTFT, server generation throughput, end-to-end latency, the actual provider/model used, and a fine-grained latency breakdown across app, model startup/prefill and generation.
-- **In-process Knowledge Pack cache:** repeated answer requests avoid re-reading/parsing an unchanged Candidate Knowledge Pack from disk.
-- **Optional Gemini Priority tier:** set `GEMINI_SERVICE_TIER=priority` to benchmark Google's lower-latency priority queue; Standard remains the default because Priority is premium-priced.
+### 3. Add Your API Keys
 
-## Requirements
-
-- Node.js 20–22
-- Chrome or Edge recommended for system-audio sharing
-- Deepgram API key with Member-or-higher permission so the server can grant short-lived browser JWTs
-- Gemini API key for the default answer model
-- Gemini API key is also currently used for one-time Knowledge Pack extraction and background meeting-memory updates
-- Optional Tavily key for current/fresh web facts
-- Optional Cerebras/Groq key if benchmarking those inference providers
-
-## Setup
-
-```bash
-cp .env.example .env.local
-npm install
-npm run verify-setup
-npm run dev
-```
-
-Open `http://localhost:3000`.
-
-`package-lock.json` is preserved from the supplied working baseline. Prefer `npm ci` for a reproducible install; use `npm install` only when intentionally changing dependencies.
-
-## Environment
-
-Minimum configuration:
+Edit `.env.local` and replace the placeholder keys:
 
 ```env
-DEEPGRAM_API_KEY="..."
+DEEPGRAM_API_KEY="your-real-deepgram-key"
+GEMINI_API_KEY="your-real-gemini-key"
 LLM_PROVIDER="gemini"
-GEMINI_API_KEY="..."
-GEMINI_MODEL="gemini-3.6-flash"
-GEMINI_THINKING_LEVEL="minimal"
-GEMINI_SERVICE_TIER="standard"
 ```
 
-For Cerebras:
+Keep the other settings from [.env.example](.env.example) initially. Make sure the configured models are available to your account. Do not share or commit `.env.local`.
 
-```env
-LLM_PROVIDER="cerebras"
-CEREBRAS_API_KEY="..."
-CEREBRAS_MODEL="gpt-oss-120b"
+For one answer model, leave `GEMINI_FALLBACK_MODEL` and `LLM_FALLBACK_PROVIDER` empty. Configuring two targets can produce two answer cards and additional API usage.
+
+### 4. Restore Old Data Before First Use
+
+If you have old JSON files, follow **Import Previous JSON Data** below before starting. If you already have a database backup, follow **Move To Another Device** instead. Skip this step for a fresh start.
+
+### 5. Check And Start
+
+```powershell
+npm.cmd run verify-setup
+npm.cmd run dev -- --hostname 127.0.0.1 --port 3000
 ```
 
-For Groq:
+Open **http://127.0.0.1:3000**. The database and tables are created when the app first accesses its data. The setup check contacts your providers and may use API quota.
 
-```env
-LLM_PROVIDER="groq"
-GROQ_API_KEY="..."
-GROQ_MODEL="openai/gpt-oss-120b"
+For everyday use without development mode, build once and start:
+
+```powershell
+npm.cmd run build
+npm.cmd run start -- --hostname 127.0.0.1 --port 3000
 ```
 
-See `.env.example` for all tuning options.
+Stop the server with `Ctrl+C`. Restart after changing `.env.local`.
 
-## First-run workflow
+## Import Previous JSON Data
 
-1. Open **Candidate Knowledge Pack**.
-2. Upload your resume as `Resume / CV`, or use **Import pack** to install a refined Candidate Knowledge Pack JSON directly.
-3. Upload the target job description as `Job description`.
-4. Add important project docs/notes if the resume does not contain enough architectural detail.
-5. Optional: add a few high-value items under **Prepared Q&A Guidance**, or import a compatible JSON bank.
-6. Open **Prompt & Persona** and add only extra facts/style preferences that are not already captured in the Knowledge Pack.
-7. Click **Connect Audio**.
-8. In the browser share picker, enable system/tab audio so remote participants are captured.
-9. Optional: enable **Capture my microphone** before connecting if you want your own answers included in follow-up context.
-10. After the interviewer asks a question, click **Generate Answer** or press `Ctrl+Enter`.
+**Keep a backup of the original files.** Importing creates database records; the automatic file importer does not delete your JSON files.
 
+### Option A: Automatic Import Of Old Files
 
-### Transcription modes
+This is the easiest option for an old application's exports on a new device.
 
-- **Interviewer-only (default):** captures shared/system audio only. No microphone permission is requested.
-- **Dual-speaker (optional):** enable **Capture my microphone** before connecting. If permission is denied or microphone STT fails, the interviewer stream continues and the UI shows a non-blocking warning.
-- Deepgram browser JWT creation is independent of microphone permission. `/api/deepgram` uses `/v1/auth/grant`, so `DEEPGRAM_API_KEY` must have Member-or-higher permission.
-
-## Candidate Knowledge Pack
-
-Knowledge is stored locally on the application server in:
+1. Stop the app if it is running.
+2. Place your files in the following folders inside the project. Keep these names for knowledge and Q&A files; session filenames can vary.
+3. Start the app and open its page. It checks these files when it first opens the database.
+4. Open **Knowledge & Q&A > Local Data** and check your sessions and any import warnings.
 
 ```text
-data/candidate-knowledge.json
+AI-Assistant/
+    data/
+        candidate-knowledge.json   <- Resume/project knowledge pack
+        qa-bank.json               <- Prepared questions and answers
+        qa-history.json            <- Previously generated answers and feedback
+    sessions/
+        session-1.json             <- One session with transcript and summary
+        session-2.json
 ```
 
-That file is git-ignored because it can contain personal/company information.
+Session files under `data/sessions/` are also supported. Each session file must contain one session object, not just a list of text lines.
 
-The one-time extractor records:
+Unchanged files are not imported again. Repeated snapshots of the same session merge matching turns. Changed files or conflicting data are reported rather than silently overwritten. Automatic knowledge/Q&A imports use the default **Candidate Knowledge** base and will not replace existing knowledge or prepared Q&A.
 
-- profile/headline/strengths
-- target role/JD requirements
-- work experience
-- projects
-- technologies
-- design decisions and rationale when explicitly stated
-- challenges/solutions/results
-- metrics and achievements
-- durable factual notes
-- source-supported compact project examples
-- search-only `answerHooks` used to recognize paraphrases such as VLM / vision agent / perception worker
+If a file fails, correct it and restart. For an already populated knowledge base, use Option B to choose where the data goes. Do not delete your database just to retry an import.
 
-The answer model is explicitly instructed not to invent personal facts that are absent from this pack, candidate notes or the live conversation.
+For the detailed import report, open **http://127.0.0.1:3000/api/database** and find `legacyImport.sources`: `COMPLETE` means imported, `SKIPPED` means already imported, and `ERROR` includes the reason.
 
-## Prepared Q&A Bank
+### Option B: Import Through The App
 
-Prepared Q&A is optional and remains separate from Candidate Knowledge. It is stored locally at `data/qa-bank.json` and is git-ignored. Only the top local matches are passed to the model; the entire bank is never added to the prompt.
-
-Use it for high-value personal/architecture questions where you care about specific framing or key points. The model still answers unseen questions from Candidate Knowledge, live conversation and its general technical knowledge. Candidate Knowledge and Candidate Notes outrank Prepared Q&A when factual claims conflict.
-
-See `docs/QA_BANK.md` and `data/qa-bank.example.json`.
-
-## Latency telemetry
-
-The response stream uses typed Server-Sent Events:
-
-```text
-event: meta
-event: delta
-event: sources
-event: metrics
-event: done
-event: error
-```
-
-Metrics available under **Diagnostics -> Metrics**:
-
-- **TTFT:** browser click until first visible answer chunk
-- **Throughput:** output tokens divided by generation time; marked `~` when token usage is estimated
-- **Total:** browser click until the stream is fully consumed
-- **Model:** provider/model that served the request
-- **HTTP headers / First SSE:** whether the browser is waiting for the server before streaming starts
-- **Server pre-model:** all backend work before the LLM request begins
-- **Model connect:** time awaiting provider stream creation
-- **First chunk wait:** delay after stream creation until the provider yields its first chunk
-- **Model wait total:** model connect + first-chunk delay; the most useful indicator for queue/prefill latency
-- **Request/knowledge/Q&A/context/prompt/web phase timings**
-- **Input, cached-input, thinking and output token counts** when exposed by the provider
-- **Provider attempts, requested service tier and thinking level**
-
-The UI also labels the likely bottleneck for each request. The server continues logging one `completion.metrics` JSON object per completed request for P50/P95 analysis.
-
-## Performance tuning order
-
-1. Keep `GEMINI_THINKING_LEVEL=minimal` for the default fast path; use `low` only if quality tests justify it.
-2. Keep simple answers short; allow architecture/project answers to expand as needed; troubleshooting architecture defaults to roughly 125–185 words for diagnosis, validation and trade-off clarity.
-3. Keep `CANDIDATE_CONTEXT_MAX_CHARS` around 4,200. V8 protects the top relevant project example before dropping secondary context; do not increase the budget unless diagnostics show missing evidence.
-4. Keep web lookup disabled for non-fresh questions.
-5. First inspect **Model wait total**, input tokens and cache-hit percentage. If model wait dominates, benchmark `GEMINI_SERVICE_TIER=priority` and alternate providers.
-6. Benchmark provider/model choices using real interview questions and compare P50/P95 TTFT, tokens/sec and answer quality.
-7. Add retrieval/vector search only if the knowledge corpus becomes large enough that local selection can no longer provide accurate context.
-
-## API surface
-
-| Endpoint | Purpose |
+| Your Data | Where To Import |
 |---|---|
-| `POST /api/completion` | streamed answer/summarization |
-| `GET/POST/PUT/DELETE /api/knowledge` | inspect/build/import/remove Candidate Knowledge |
-| `GET/POST/PUT/DELETE /api/qa-bank` | inspect/add/import/remove Prepared Q&A guidance |
-| `GET/POST/PATCH/PUT /api/qa-history` | generated-answer review, feedback and approved promotion |
-| `POST /api/memory` | asynchronous compact meeting-memory refresh |
-| `GET /api/deepgram` | short-lived browser transcription JWT |
-| `GET /api/health` | configuration/health summary |
-| `GET/POST /api/sessions` | local session persistence |
+| Your resume or personal project document | Select the default **Candidate Knowledge** base, then use **Candidate Knowledge Pack > Add source**. Choose the document type first. PDF, TXT, MD and JSON are supported. |
+| Job description for an interview | Paste it in **Session Details > Giving Interview > Job description**. It belongs to that session, not your permanent resume. |
+| Candidate profile for an interview you conduct | Paste it in **Session Details > Taking Interview > Candidate profile**. Do not import another candidate's information into your personal knowledge base. |
+| Meeting/reference document | Select or create a separate reference knowledge base, then use **Candidate Knowledge Pack > Add source**. Choose that base when starting a Meeting. |
+| Existing structured resume/project pack | Select the knowledge base, then use **Candidate Knowledge Pack > Import pack**. This replaces that base's knowledge pack, not its prepared Q&A. |
+| Prepared Q&A JSON | Select the knowledge base, then use **Prepared Q&A Guidance > Import JSON**. This merges entries; matching questions may be updated. |
+| Session transcripts and generated-answer history | Use Option A. These are different formats from prepared Q&A. |
 
-## Project structure
+The on-screen pack and Q&A JSON imports accept files up to **2 MB**. A normal document upload accepts up to **12 MB**. Scanned PDFs without extractable text must be converted to text first.
 
-```text
-app/api/completion/        answer orchestration + SSE telemetry
-app/api/knowledge/         Candidate Knowledge Pack ingestion
-app/api/qa-bank/           Prepared Q&A persistence/import API
-app/api/memory/            background meeting-memory refresh
-app/api/deepgram/          ephemeral Deepgram credential
-components/copilot.tsx     answer UI + TTFT measurement
-components/recorder.tsx    required system audio + optional microphone capture
-lib/audio/                 PCM AudioWorklet transport
-lib/transcriptStateMachine speaker-aware turn state
-lib/question/              QuestionBundle + deterministic AnswerContract
-lib/knowledge/             knowledge schema + Evidence Capsule selection
-lib/qa/                    Q&A schema + local matching
-lib/server/                knowledge extraction + persistence
-lib/llm/                   Gemini/Cerebras/Groq provider abstraction
-public/worklets/           browser PCM downsampler
+### Small JSON Examples
+
+Use your existing exports where possible. These examples show the expected shapes; keep real IDs and timestamps when importing your own data.
+
+**Session file**, for example `sessions/session-1.json`:
+
+```json
+{
+    "id": "session-1",
+    "startedAt": "2026-10-06T09:00:00.000Z",
+    "endedAt": "2026-10-06T09:30:00.000Z",
+    "sessionInfo": { "company": "Example", "callType": "giving_interview", "details": "Technical interview" },
+    "transcripts": [
+        { "id": "turn-1", "sequenceId": 1, "speaker": "interviewer", "text": "What is SQLite?", "timestamp": "2026-10-06T09:01:00.000Z" },
+        { "id": "turn-2", "sequenceId": 2, "speaker": "me", "text": "A local database stored in a file.", "timestamp": "2026-10-06T09:02:00.000Z" }
+    ],
+    "summary": "Discussed SQLite and local storage."
+}
 ```
 
-## Validation
+Call types are `giving_interview`, `taking_interview` or `meeting`. Speakers are `me` (local) and `interviewer` (remote); in Taking Interview, the remote speaker is the candidate despite this legacy field name. The example is a historical session and does not need the new interview setup fields to be imported or viewed. Old `interview`/`screen` modes and `external` speaker labels are also accepted. Older time-only transcript timestamps are reconstructed from the session date; check them after moving across time zones.
 
-```bash
-npm run verify-setup
-npm run typecheck
-npm run smoke
-npm run build
+**Prepared Q&A**, for example `data/qa-bank.json`:
+
+```json
+{
+    "version": 1,
+    "updatedAt": "2026-10-06T09:00:00.000Z",
+    "entries": [{
+        "id": "qa-1",
+        "questions": ["What is SQLite?", "Why use a local database?"],
+        "answer": "SQLite stores data in one local file without a separate database server.",
+        "keyPoints": ["Local file", "No database server"],
+        "tags": ["sqlite"],
+        "personal": false,
+        "priority": 5,
+        "enabled": true,
+        "createdAt": "2026-10-06T09:00:00.000Z",
+        "updatedAt": "2026-10-06T09:00:00.000Z"
+    }]
+}
 ```
 
-`npm run smoke` exercises transcript boundaries, long-scenario QuestionBundle reconstruction, AnswerContract classification, Evidence Capsule selection, Prepared Q&A matching, prompt-rule isolation/SessionInfo injection, and STT terminology without external APIs.
+**Resume/project knowledge pack**, for example `data/candidate-knowledge.json`:
 
-For actual performance evaluation, collect at least 50–100 representative questions and compare **P50/P95 TTFT, P50/P95 throughput, factual correctness, personalization accuracy and hallucination rate**. Do not select a provider from tokens/sec alone.
+```json
+{
+    "version": 2,
+    "updatedAt": "2026-10-06T09:00:00.000Z",
+    "profile": { "headline": "Software Engineer", "summary": "Experience building web applications.", "strengths": ["TypeScript"] },
+    "experience": [],
+    "projects": [],
+    "skills": ["TypeScript", "React"],
+    "achievements": [],
+    "facts": ["Built an internal reporting application."],
+    "sources": []
+}
+```
 
-## Deployment notes
+**Generated-answer history**, for example `data/qa-history.json`. Notice that this file is an array, not a prepared Q&A bank:
 
-The current persistence layer intentionally uses the local filesystem because this project is being optimized first for a single-user/local or persistent-host deployment. Before horizontal/serverless scale-out, replace `lib/server/knowledgeStore.ts` and local session storage with a shared durable store (PostgreSQL/object storage/Redis as appropriate). The LLM and transcript layers are already separated from that storage implementation.
+```json
+[
+    {
+        "id": "history-1",
+        "createdAt": "2026-10-06T09:01:00.000Z",
+        "sessionId": "session-1",
+        "question": "What is SQLite?",
+        "answer": "SQLite is a database stored in a local file.",
+        "tag": "Interview Answer",
+        "callType": "giving_interview",
+        "feedback": "good"
+    }
+]
+```
 
-## V9 answer-quality pipeline
+Importing history does **not** automatically turn it into prepared Q&A. Use **Generated Answer Review** to mark a completed answer **Good**, then explicitly promote it.
 
-V9 fixes the pre-model quality bottleneck without adding another inference call. Generate Answer reconstructs a full interviewer `QuestionBundle`, derives a deterministic `AnswerContract`, selects a compact Evidence Capsule, and injects SessionInfo before the single answer-model stream. Immutable quality rules cannot be replaced by stale browser prompt settings.
+### Data That Only Exists In An Old Browser
 
-Generated Q&A history is now reviewable: mark answers **Good** or **Poor**; only Good answers can be explicitly promoted to Prepared Q&A.
+Open this updated app in the **same browser, browser profile and address** used previously. Old browser sessions, saved answers and supported preferences are moved to SQLite after the server acknowledges the import.
 
-See `PATCH_NOTES_V9.md` and `docs/ANSWER_QUALITY_PIPELINE.md`.
+`localhost`, `127.0.0.1` and different ports have separate browser storage. If the old address was `http://localhost:3000`, use that address for this one-time migration. Afterwards, create a database backup to move the data to your new device. A fresh browser on a new device cannot read the old device's browser data.
 
-## V8 evidence-aware context
+Original PDFs cannot be recovered from old JSON that only contains extracted facts. Upload them again if you need the original-file download feature.
 
-V8 protects the highest-value real project evidence instead of simply minimizing characters. Projects can carry search-only `answerHooks` and source-supported compact `examples`. Architecture/scenario answers dynamically expand when useful and include one relevant real project reference when the Knowledge Pack supports it.
+## Use The App
 
-Use **Diagnostics → Context** to see the protected project, match score, selected project example, answer mode, and exact context sent to the model.
+1. For Giving Interview, upload or import your resume once into the default **Candidate Knowledge** base under **Knowledge & Q&A**. Keep your prepared personal Q&A there too. Uploading a revised resume there replaces the previous resume document even if the filename changes, without clearing project notes or prepared Q&A.
+2. Open **Prompt > Templates** to edit a call-type prompt, or use **Style Preferences** for tone and answer format.
+3. Click **Connect Audio** and choose the mode. For **Giving Interview**, paste the job description; the saved resume is used automatically. For **Taking Interview**, enter this candidate's profile. **Meeting** still lets you choose reference knowledge bases.
+4. Enable **Share audio** in the browser picker. **Taking Interview requires microphone permission** to include your questions alongside the candidate's responses; setup stops if either required stream cannot start. Microphone capture remains optional for other modes.
+5. Click **Generate Response** or press `Ctrl+Enter` when the remote participant finishes.
+6. Disconnect when finished. View the saved transcript and summary under **Local Data**. A summary can remain pending or fail if the AI provider is unavailable; the saved transcript remains intact.
 
-See `PATCH_NOTES_V8.md` and `docs/PROJECT_EVIDENCE.md`.
+### Giving Interview
 
-## V7 live-meeting optimizations
+- Save your resume in the default **Candidate Knowledge** base once. There is no resume selector in interview setup.
+- Enter the **job description** for the current opportunity: role, responsibilities, required skills and experience. This field is required and accepts up to **12,000 characters**.
+- Answers use your saved resume, prepared personal Q&A, job description and captured conversation. Job requirements are not treated as experience you already have.
+- Your microphone is optional. Enable it before connecting to include your answers in follow-up context.
 
-V7 keeps the primary meeting screen intentionally small. Open **Knowledge & Q&A** only when managing sources, and **Diagnostics** only when inspecting context/latency. Generate Answer now uses a compact dynamic candidate-context budget and exposes the exact model context/Q&A matches through the Diagnostics drawer.
+### Taking Interview
 
-See `PATCH_NOTES_V7.md` and `docs/CONTEXT_INSPECTOR.md`.
+- Enter the **candidate profile** for this interview: the candidate's role, experience, projects and skills. Use information supplied by the candidate. This field is required and accepts up to **12,000 characters**.
+- Share the candidate's audio and allow your microphone. Microphone capture is mandatory for this mode even if your normal microphone preference is off.
+- Evaluation and follow-ups use the profile, the candidate's latest response, your interviewer questions and recent conversation from both participants. Your own resume and prepared personal Q&A are not used.
+- The transcript labels the remote person **Candidate** and your microphone **Me (Interviewer)**. The latest contribution from each speaker is retained within the answer prompt's context budget, including after long candidate responses.
+- If a required stream cannot start, setup stops and releases the captured streams. If a required stream ends during the interview, both-speaker capture stops; reconnect before continuing.
 
-## V10 call-type prompt profiles
+### Meeting
 
-V10 requires a call mode before audio starts: **Giving Interview**, **Taking Interview**, or **Meeting**. The selected mode changes the Generate behavior, rolling-memory prompt, summarizer prompt, UI labels, and which context sources are allowed on the critical path.
+Select **1 to 20 knowledge bases** for reference material. The assistant suggests responses and tracks discussion and decisions. Shared audio is required; your microphone is optional. No job description or candidate profile is required.
 
-All prompt wording is maintained under `lib/prompts/`; see `docs/PROMPT_PROFILES.md`.
+### Session Context
 
-Question reconstruction confidence is now visible on the main screen. `HIGH` trusts the reconstructed ask, `MEDIUM` combines it with the full scenario, and `FALLBACK` makes the scenario authoritative. This is implemented deterministically and adds no model/API hop.
+Job descriptions and candidate profiles are stored with their sessions and included in rolling memory and summaries. They are not global settings and are not added to your personal resume knowledge. New setup starts with empty interview inputs; cancelling or switching modes clears them. Existing sessions without these fields can still be viewed; start a new interview with the required context before generating answers.
+
+For longer calls, answer generation uses recent turns and rolling memory rather than sending the entire transcript on every request. SQLite retains the full finalized transcript. Session context is included in database backups, so keep backups private.
+
+In **Session Details**, `Ctrl+Enter` submits setup after the required fields are filled and `Esc` cancels. During a call, `Ctrl+Enter` generates a response.
+
+**Diagnostics** shows the selected context, search time, prompt version and response timing. Search uses local keyword matching, not semantic/vector search, so adding alternate question wording can improve matches.
+
+## Back Up And Move To Another Device
+
+If you already use the SQLite version, this is easier than exporting JSON files.
+
+1. On the old device, open **Knowledge & Q&A > Local Data > Create Backup**.
+2. Download the backup using the link that appears. It contains the database data, including stored documents, prompts and settings, but **not API keys**.
+3. Set up the same application version on the new device and create its `.env.local`.
+4. Before starting it, place the downloaded backup in `data/` and rename it to `copilot.db`.
+5. Start the app and check **Local Data**. You do not need to import the old JSON files again.
+
+When replacing an existing database, **stop the app and any database viewer first**. Keep a recovery copy of the old database and its `-wal`/`-shm` files together. Move those old sidecar files away before installing the standalone backup; never combine them with the restored database.
+
+Do not copy only `copilot.db` while the app is running. Use **Create Backup**, which safely includes committed data still held in the write-ahead log. Restoration is currently a stopped-app file replacement, not an in-app button.
+
+The database path is shown in **Local Data**. If `COPILOT_DB_PATH` is set, restore to that path instead. Update old device-specific paths in `.env.local`, or leave them unset to use the default. `COPILOT_LEGACY_ROOT` can point to an old project folder containing the JSON files.
+
+Keep the database and backups private, on local disk rather than a network drive or actively synced folder. Ordinary SQLite files are not encrypted. Personal data is git-ignored and is not included in a clone of the project.
+
+## Common Problems
+
+| Problem | What To Do |
+|---|---|
+| PowerShell blocks `npm.ps1` | Use `npm.cmd`, as in the commands above. No execution-policy change is needed. |
+| Packages or SQLite native module will not install | Confirm Node is 22 or newer, then run `npm.cmd ci`. Reinstall packages after changing Node version; do not copy `node_modules` from another device. |
+| Deepgram reports insufficient permission | Use a key with Member-or-higher permission, update `.env.local` and restart. |
+| Giving Interview shows **No saved resume** | Upload or import your resume into the default **Candidate Knowledge** base. A resume in a different base is not selected automatically. |
+| **Start Session** is disabled | Select a mode and fill its required input: job description for Giving Interview, candidate profile for Taking Interview, or knowledge bases for Meeting. Interview text must fit within 12,000 characters. |
+| Taking Interview cannot start the microphone | Allow microphone access in the browser and operating system, check the selected input device and retry. This mode cannot continue with remote audio alone. |
+| No shared audio or a required stream ended | Enable **Share audio** for the selected tab/window in the browser picker. Reconnect if sharing or the required microphone stream ends. |
+| Imported JSON is missing | Check filenames, JSON format and **Local Data** warnings. Restart after placing files; keep the originals. |
+| Import says existing data or source changed | Automatic import will not overwrite it. Use the correct base's UI import for knowledge/Q&A; reconcile session/history conflicts without deleting the database. |
+| Search results look stale | Use **Local Data > Rebuild Search Index**. |
+| Transcript saving reports an error | Use **Retry Save** in the audio panel and check disk space. Do not clear browser storage while saves are pending. |
+| Port 3000 is busy | Use `--port 3001` in the start command and open the matching address. Existing SQLite data still loads, but legacy browser storage belongs to its original address. |
+
+## Optional Development Checks
+
+```powershell
+npm.cmd run validate
+```
+
+This runs TypeScript, database/integration tests, smoke checks and a production build. Tests use temporary databases and mocked AI providers; they do not spend API credits or require these checks during normal use. Interview tests cover required inputs, per-session isolation, both-speaker prompt context and capture startup failures. Real screen/microphone capture and live cloud responses must be checked separately.

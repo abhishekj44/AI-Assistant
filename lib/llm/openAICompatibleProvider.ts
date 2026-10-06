@@ -128,7 +128,7 @@ export async function createOpenAICompatibleStream(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
   } catch (error: any) {
     throw new LLMProviderError({

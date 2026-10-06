@@ -7,7 +7,9 @@ import {
   readKnowledgePack,
   replaceKnowledgePack,
 } from "@/lib/server/knowledgeStore";
-import { extractKnowledgeSource } from "@/lib/server/knowledgeExtractor";
+import { extractKnowledgeSourceWithData } from "@/lib/server/knowledgeExtractor";
+import { DEFAULT_KNOWLEDGE_BASE_ID } from "@/lib/server/db/migrations";
+import { KnowledgeBaseError, knowledgeBaseRepository } from "@/lib/server/repositories/knowledgeBaseRepository";
 
 export const runtime = "nodejs";
 
@@ -48,7 +50,8 @@ function validateImportedPack(pack: any): string | null {
   return null;
 }
 
-function clientView(pack: Awaited<ReturnType<typeof readKnowledgePack>>) {
+function clientView(pack: Awaited<ReturnType<typeof readKnowledgePack>>, baseId: string) {
+  const availability = knowledgeBaseRepository.sourceAvailability(baseId);
   return {
     version: pack.version,
     updatedAt: pack.updatedAt,
@@ -73,18 +76,39 @@ function clientView(pack: Awaited<ReturnType<typeof readKnowledgePack>>) {
         ...pack.sources.flatMap((source) => source.keywords || []),
       ].map((value) => value?.trim()).filter(Boolean)),
     ).slice(0, 40),
-    sources: pack.sources.map(({ contribution: _contribution, rawExcerpt: _rawExcerpt, ...source }) => source),
+    sources: pack.sources.map(({ contribution: _contribution, rawExcerpt: _rawExcerpt, ...source }) => ({ ...source, hasOriginal: availability[source.id] === true })),
   };
 }
 
-export async function GET() {
-  const pack = await readKnowledgePack();
-  return NextResponse.json(clientView(pack));
+export async function GET(request: Request) {
+  try {
+    const parameters = new URL(request.url).searchParams;
+    const baseId = parameters.get("baseId") ?? DEFAULT_KNOWLEDGE_BASE_ID;
+    knowledgeBaseRepository.require(baseId);
+    if (parameters.get("download") === "1") {
+      const original = knowledgeBaseRepository.original(baseId, parameters.get("sourceId") ?? "");
+      const filename = original.filename.replace(/[\x00-\x1f\x7f"\\/]/g, "_").slice(0, 200) || "source";
+      const asciiFilename = filename.replace(/[^\x20-\x7e]/g, "_");
+      const encodedFilename = encodeURIComponent(filename).replace(/['()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+      return new Response(new Uint8Array(original.bytes), { headers: {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+      } });
+    }
+    const pack = await readKnowledgePack(baseId);
+    return NextResponse.json(clientView(pack, baseId), { headers: { "Cache-Control": "no-store" } });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message || "Failed to load knowledge" }, { status: error instanceof KnowledgeBaseError ? error.status : 500 });
+  }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
+    const baseId = new URL(request.url).searchParams.get("baseId") ?? formData.get("baseId") ?? DEFAULT_KNOWLEDGE_BASE_ID;
+    if (typeof baseId !== "string") throw new KnowledgeBaseError("Invalid knowledge base id");
+    knowledgeBaseRepository.require(baseId);
     const file = formData.get("file");
     const requestedType = String(formData.get("documentType") || "other") as KnowledgeDocumentType;
 
@@ -95,17 +119,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid document type" }, { status: 400 });
     }
 
-    const source = await extractKnowledgeSource(file, requestedType);
-    const pack = await addKnowledgeSource(source);
+    const { source, documentData } = await extractKnowledgeSourceWithData(file, requestedType);
+    const pack = await addKnowledgeSource(source, documentData, baseId);
     return NextResponse.json({
       message: "Candidate Knowledge Pack updated",
       source: { id: source.id, filename: source.filename, type: source.type, summary: source.summary },
-      pack: clientView(pack),
+      pack: clientView(pack, baseId),
     });
   } catch (error: any) {
-    console.error("[knowledge] upload failed", error);
+    if (!(error instanceof KnowledgeBaseError)) console.error("[knowledge] upload failed", error);
     const message = error?.message || "Failed to process the knowledge document";
-    const status = /required|empty|supported|limit|extractable|invalid/i.test(message) ? 400 : 500;
+    const status = error instanceof KnowledgeBaseError ? error.status : /required|empty|supported|limit|extractable|invalid/i.test(message) ? 400 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
@@ -113,6 +137,8 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
+    const baseId = new URL(request.url).searchParams.get("baseId") ?? body?.baseId ?? DEFAULT_KNOWLEDGE_BASE_ID;
+    knowledgeBaseRepository.require(baseId);
     const pack = body?.pack;
     if (!pack || typeof pack !== "object") {
       return NextResponse.json({ error: "A Candidate Knowledge Pack JSON object is required" }, { status: 400 });
@@ -121,26 +147,28 @@ export async function PUT(request: NextRequest) {
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
-    const normalized = await replaceKnowledgePack(pack);
-    return NextResponse.json({ message: "Candidate Knowledge Pack imported", pack: clientView(normalized) });
+    const normalized = await replaceKnowledgePack(pack, baseId);
+    return NextResponse.json({ message: "Candidate Knowledge Pack imported", pack: clientView(normalized, baseId) });
   } catch (error: any) {
-    console.error("[knowledge] pack import failed", error);
-    return NextResponse.json({ error: error?.message || "Failed to import Candidate Knowledge Pack" }, { status: 400 });
+    if (!(error instanceof KnowledgeBaseError)) console.error("[knowledge] pack import failed", error);
+    return NextResponse.json({ error: error?.message || "Failed to import Candidate Knowledge Pack" }, { status: error instanceof KnowledgeBaseError ? error.status : 400 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
     const sourceId = new URL(request.url).searchParams.get("sourceId");
+    const baseId = new URL(request.url).searchParams.get("baseId") ?? DEFAULT_KNOWLEDGE_BASE_ID;
+    knowledgeBaseRepository.require(baseId);
     if (!sourceId) {
-      const pack = await clearKnowledgePack();
-      return NextResponse.json({ message: "Candidate Knowledge Pack cleared", pack: clientView(pack) });
+      const pack = await clearKnowledgePack(baseId);
+      return NextResponse.json({ message: "Candidate Knowledge Pack cleared", pack: clientView(pack, baseId) });
     }
 
-    const pack = await deleteKnowledgeSource(sourceId);
-    return NextResponse.json({ message: "Knowledge source removed", pack: clientView(pack) });
+    const pack = await deleteKnowledgeSource(sourceId, baseId);
+    return NextResponse.json({ message: "Knowledge source removed", pack: clientView(pack, baseId) });
   } catch (error: any) {
-    const status = /not found/i.test(error?.message || "") ? 404 : 500;
+    const status = error instanceof KnowledgeBaseError ? error.status : /not found/i.test(error?.message || "") ? 404 : 500;
     return NextResponse.json({ error: error?.message || "Failed to remove knowledge source" }, { status });
   }
 }

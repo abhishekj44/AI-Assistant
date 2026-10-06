@@ -89,6 +89,10 @@ async function createStreamForTarget(
   return createOpenAICompatibleStream(target.provider, prompt, options, target.model);
 }
 
+export function getConfiguredTargets(): Array<{ provider: LLMProviderName; model?: string }> {
+  return targets();
+}
+
 export async function createLLMStream(
   prompt: string,
   options: LLMRequestOptions = {},

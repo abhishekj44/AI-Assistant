@@ -46,6 +46,7 @@ export async function createGeminiStream(
     // serviceTier can be used without coupling this file to one generated type shape.
     const config: any = {
       maxOutputTokens: options.maxOutputTokens ?? 320,
+      abortSignal: options.signal,
       systemInstruction: options.systemInstruction,
       thinkingConfig: {
         thinkingLevel: thinking.sdk,

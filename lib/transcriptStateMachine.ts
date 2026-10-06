@@ -1,5 +1,5 @@
 import type { SpeakerRole, TranscriptTurn } from "@/lib/conversationTypes";
-import { buildQuestionBundle, type QuestionBundle } from "@/lib/question/questionBundle";
+import { buildCandidateResponseBundle, buildQuestionBundle, type QuestionBundle } from "@/lib/question/questionBundle";
 
 export type UtteranceSegment = TranscriptTurn;
 export type TranscriptSubscriber = (utterances: UtteranceSegment[], currentInterim: string | null) => void;
@@ -198,6 +198,18 @@ export class TranscriptStateMachine {
     this.notifySubscribers();
   }
 
+  restore(turns: TranscriptTurn[]): void {
+    const seen = new Set<string>();
+    this.finalizedUtterances = turns.filter(turn => {
+      if (turn.isInterim || seen.has(turn.id)) return false;
+      seen.add(turn.id);
+      return true;
+    }).slice(-MAX_IN_MEMORY_FINALIZED_TURNS).map(turn => ({ ...turn, isInterim: false }));
+    this.sequenceCounter = Math.max(0, ...this.finalizedUtterances.map(turn => turn.sequenceId));
+    this.inFlight = { interviewer: newInFlight(), me: newInFlight() };
+    this.notifySubscribers();
+  }
+
   getRecentFinalizedTurns(n = 12): UtteranceSegment[] {
     return this.finalizedUtterances.slice(-Math.max(1, Math.min(n, 50)));
   }
@@ -214,6 +226,14 @@ export class TranscriptStateMachine {
       maxInterviewerTurns: 10,
       maxChars: 5_500,
       maxSpanMs: 150_000,
+    });
+  }
+
+  getLatestCandidateResponseBundle(): QuestionBundle | null {
+    const active = this.inFlight.interviewer;
+    return buildCandidateResponseBundle(this.finalizedUtterances, {
+      activeInterviewerText: [...active.segments, active.interim].filter(Boolean).join(" "),
+      maxInterviewerTurns: 10, maxChars: 5_500, maxSpanMs: 150_000,
     });
   }
 

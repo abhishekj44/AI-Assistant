@@ -1,0 +1,57 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { openDatabase } from "../lib/server/db/connection";
+import { PromptRepository, PromptConflictError } from "../lib/server/repositories/promptRepository";
+import { CORE_QUALITY_RULES } from "../lib/prompts";
+import { getRuntimeCallPrompt, getRuntimeInstruction, renderLiteralPlaceholders, renderRuntimePrompt } from "../lib/server/runtimePrompts";
+
+test("runtime rendering uses the active version and substitutes literals only once", (context) => {
+  const db = openDatabase(":memory:");
+  context.after(() => db.close());
+  const repo = new PromptRepository(db);
+  const row = repo.getActive("ANSWER", "INTERVIEWER", "course_admission");
+  const edited = repo.update({ id: row.id, baseVersion: row.version, system_template: "Custom {{background}}", user_template: "Ask: {{question}}" });
+  const rendered = renderRuntimePrompt("ANSWER", { callType: "taking_interview", modeVariant: "course_admission" }, { background: "$& {{question}}", question: "Actual question" }, repo);
+  assert.equal(rendered.promptId, edited.id);
+  assert.equal(rendered.promptVersion, 2);
+  assert.equal(getRuntimeCallPrompt({ callType: "taking_interview", modeVariant: "course_admission" }, repo).promptId, edited.id);
+  assert.equal(rendered.prompt, "Ask: Actual question");
+  assert.ok(rendered.systemInstruction.includes("Custom $& {{question}}"));
+  assert.ok(rendered.systemInstruction.includes(CORE_QUALITY_RULES));
+  assert.throws(() => renderLiteralPlaceholders("{{message}}"), /Missing placeholder/);
+  const memory = renderRuntimePrompt("MEMORY", { callType: "taking_interview" }, { previousMemory: JSON.stringify({ summary: "old" }), recentTurns: JSON.stringify([{ text: "new" }]) }, repo);
+  assert.ok(memory.prompt.includes('<PREVIOUS_MEMORY_DATA>\n{"summary":"old"}'));
+  assert.throws(() => repo.getActive("CHAT", "MEETING"), /Invalid prompt mode/);
+  assert.throws(() => repo.getActive("BOGUS" as any), /Invalid prompt purpose/);
+  assert.throws(() => repo.update({ key: edited.template_key, baseVersion: 2, system_template: "{{message}}", user_template: "" }), /placeholder/);
+  assert.throws(() => repo.update({ key: edited.template_key, baseVersion: 2, system_template: "{{question", user_template: "" }), /placeholder/);
+  const reset = repo.update({ key: edited.template_key, baseVersion: 2, system_template: "", user_template: "", reset: true });
+  assert.equal(reset.version, 3);
+  assert.equal(reset.system_template, row.system_template);
+  const extraction = repo.getActive("EXTRACTION");
+  repo.update({ id: extraction.id, baseVersion: 1, system_template: "Custom extraction style", user_template: extraction.user_template });
+  const instruction = getRuntimeInstruction("EXTRACTION", { callType: "taking_interview", modeVariant: "course_admission" }, repo);
+  assert.equal(instruction.promptVersion, 2);
+  assert.ok(instruction.systemInstruction.includes("Custom extraction style"));
+  assert.ok(instruction.systemInstruction.includes("Extract only facts explicitly supported"));
+});
+
+test("prompts seed all modes lazily, preserve edits, and reject stale versions", (context) => {
+  const db = openDatabase(":memory:");
+  context.after(() => db.close());
+  const repo = new PromptRepository(db);
+  assert.equal(db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM prompts").get()!.count, 0);
+  assert.equal(repo.list().length, 12);
+  const row = repo.getActive("ANSWER", "INTERVIEWER", "course_admission");
+  const core = CORE_QUALITY_RULES;
+  const next = repo.update({ key: row.template_key, baseVersion: 1, system_template: "Edited identity", user_template: row.user_template, parameters: { ...row.parameters, modeRules: "Edited mode rules" } });
+  assert.equal(next.version, 2);
+  assert.throws(() => repo.update({ key: row.template_key, baseVersion: 1, system_template: "Stale", user_template: "" }), PromptConflictError);
+  assert.equal(new PromptRepository(db).getActive("ANSWER", "INTERVIEWER", "course_admission").system_template, "Edited identity");
+  assert.equal(repo.list(false).filter((item) => item.template_key === row.template_key).length, 2);
+  assert.equal(repo.list().filter((item) => item.template_key === row.template_key).length, 1);
+  assert.equal(CORE_QUALITY_RULES, core);
+  assert.equal(repo.getActive("SUMMARY", "INTERVIEWER", "course_admission").variant, "standard");
+  assert.throws(() => repo.update({ id: next.id, baseVersion: 2, system_template: "{{execute}}", user_template: "" }), /placeholder/);
+  assert.throws(() => repo.update({ id: next.id, baseVersion: 2, system_template: "Valid", user_template: "", parameters: { ...next.parameters, coreRules: "override" } }), /Unknown prompt parameter/);
+});

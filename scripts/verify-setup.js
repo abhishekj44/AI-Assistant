@@ -95,8 +95,8 @@ async function verifyDeepgram() {
 async function main() {
   console.log("Meeting Copilot setup verification\n");
 
-  if (Number(process.versions.node.split(".")[0]) >= 20) ok(`Node ${process.versions.node}`);
-  else fail(`Node ${process.versions.node}; Node 20+ is required`);
+  if (Number(process.versions.node.split(".")[0]) >= 22) ok(`Node ${process.versions.node}`);
+  else fail(`Node ${process.versions.node}; Node 22+ is required`);
 
   const worklet = path.join(process.cwd(), "public", "worklets", "pcm-processor.js");
   fs.existsSync(worklet) ? ok("PCM AudioWorklet present") : fail("public/worklets/pcm-processor.js is missing");

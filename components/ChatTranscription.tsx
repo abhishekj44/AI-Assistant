@@ -5,6 +5,7 @@ import { ArrowDown, MessageSquare, Trash2, User, UserRound } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SpeakerRole } from "@/lib/conversationTypes";
+import { conversationSpeakerLabel, type CallType } from "@/lib/callTypes";
 
 interface ChatMessage {
   id: string;
@@ -18,9 +19,10 @@ interface ChatTranscriptionProps {
   messages: ChatMessage[];
   onClear: () => void;
   className?: string;
+  callType?: CallType;
 }
 
-export function ChatTranscription({ messages, onClear, className }: ChatTranscriptionProps) {
+export function ChatTranscription({ messages, onClear, className, callType }: ChatTranscriptionProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -60,7 +62,7 @@ export function ChatTranscription({ messages, onClear, className }: ChatTranscri
           <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-2 py-8">
             <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center text-xl">🎙️</div>
             <p className="text-sm font-medium text-slate-600">Waiting for conversation audio…</p>
-            <p className="text-xs text-slate-400 text-center">Connect system audio to start. Microphone capture is optional for your side of the conversation.</p>
+            <p className="text-xs text-slate-400 text-center">{callType === "taking_interview" ? "Waiting for the candidate and interviewer audio." : "Connect system audio to start. Microphone capture is optional for your side of the conversation."}</p>
           </div>
         ) : (
           messages.map((message) => {
@@ -70,7 +72,7 @@ export function ChatTranscription({ messages, onClear, className }: ChatTranscri
                 <div className="flex items-center gap-1.5 mb-1 px-1">
                   <span className={cn("text-[11px] font-semibold flex items-center gap-1", interviewer ? "text-indigo-600" : "text-emerald-700")}>
                     {interviewer ? <User className="w-3 h-3" /> : <UserRound className="w-3 h-3" />}
-                    {interviewer ? "Interviewer" : "Me"}
+                    {conversationSpeakerLabel(message.speaker, callType)}
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono">
                     {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}

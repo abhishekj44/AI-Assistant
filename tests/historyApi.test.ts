@@ -1,0 +1,41 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { GET, POST, PATCH, PUT } from "../app/api/qa-history/route";
+import { getDatabase } from "../lib/server/db/connection";
+import { ModelRunRepository } from "../lib/server/repositories/modelRunRepository";
+
+test("history API uses durable run ids and refuses promotion of interrupted output", async (context) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-history-"));
+  const cwd = process.cwd();
+  const previousPath = process.env.COPILOT_DB_PATH;
+  process.chdir(directory);
+  process.env.COPILOT_DB_PATH = path.join(directory, "test.db");
+  const database = getDatabase();
+  context.after(() => {
+    database.close();
+    process.chdir(cwd);
+    if (previousPath) process.env.COPILOT_DB_PATH = previousPath;
+    else delete process.env.COPILOT_DB_PATH;
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const request = (body: object) => new Request("http://localhost/api/qa-history", { method: "POST", body: JSON.stringify(body) });
+  const saved = await POST(request({ id: "answer", question: "Why SQLite?", answer: "Local transactions", callType: "giving_interview" }));
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).id, "answer");
+  assert.equal((await PUT(request({ id: "answer" }))).status, 409);
+  assert.equal((await PATCH(request({ id: "answer", feedback: "good" }))).status, 200);
+  assert.equal((await PUT(request({ id: "answer" }))).status, 200);
+  assert.equal((await PATCH(request({ id: "answer", feedback: "poor" }))).status, 409);
+  const runs = new ModelRunRepository(database);
+  const requestId = runs.createRequest({ purpose: "ANSWER", prompt: "test", mode: "INTERVIEWEE" });
+  const id = runs.start({ requestId });
+  runs.finish(id, { status: "INTERRUPTED", output: "partial" });
+  assert.equal((await PATCH(request({ id, feedback: "good" }))).status, 409);
+  const data = await (await GET(new Request("http://localhost/api/qa-history"))).json();
+  assert.equal(data.entries.length, 2);
+  assert.equal(data.entries.find((entry: { id: string }) => entry.id === "answer").promotedQaEntryId, "run_answer");
+  assert.equal(fs.existsSync(path.join(directory, "data", "qa-history.json")), false);
+});

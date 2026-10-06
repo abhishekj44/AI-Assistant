@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FileJson, Loader2, MessageSquarePlus, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import type { KnowledgeBase } from "@/lib/server/repositories/knowledgeBaseRepository";
 
 interface QAEntryView {
   id: string;
@@ -37,6 +38,9 @@ function splitTags(value: string): string[] {
 }
 
 export function QABankManager() {
+  const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [baseId, setBaseId] = useState("personal-knowledge");
+  const selectedBaseRef = useRef(baseId);
   const [bank, setBank] = useState<QABankView | null>(null);
   const [questions, setQuestions] = useState("");
   const [answer, setAnswer] = useState("");
@@ -49,22 +53,44 @@ export function QABankManager() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
-  const load = async () => {
+  const load = async (signal?: AbortSignal) => {
     try {
-      const response = await fetch("/api/qa-bank", { cache: "no-store" });
+      const response = await fetch(`/api/qa-bank?baseId=${encodeURIComponent(baseId)}`, { cache: "no-store", signal });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || "Unable to load Q&A bank");
-      setBank(payload);
+      if (!signal?.aborted) setBank(payload);
     } catch (error: any) {
-      setStatus(error?.message || "Unable to load Q&A bank");
+      if (!signal?.aborted) setStatus(error?.message || "Unable to load Q&A bank");
     }
   };
 
   useEffect(() => {
-    void load();
-    const refresh = () => void load();
+    const controller = new AbortController();
+    setBank(null);
+    void load(controller.signal);
+    const refresh = () => void load(controller.signal);
     window.addEventListener("qa-bank-updated", refresh);
-    return () => window.removeEventListener("qa-bank-updated", refresh);
+    return () => { controller.abort(); window.removeEventListener("qa-bank-updated", refresh); };
+  }, [baseId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadBases = async () => {
+      try {
+        const response = await fetch("/api/knowledge-bases", { cache: "no-store", signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error || "Unable to load knowledge bases");
+        if (!controller.signal.aborted) setBases(payload.bases);
+      } catch (error: any) { if (!controller.signal.aborted) setStatus(error?.message || "Unable to load knowledge bases"); }
+    };
+    const selected = (event: Event) => {
+      const selectedId = (event as CustomEvent<{ baseId: string }>).detail?.baseId;
+      if (typeof selectedId === "string") { selectedBaseRef.current = selectedId; setBaseId(selectedId); setBank(null); setExpanded(false); setStatus(""); resetForm(); }
+    };
+    void loadBases();
+    window.addEventListener("knowledge-bases-updated", loadBases);
+    window.addEventListener("knowledge-base-selected", selected);
+    return () => { controller.abort(); window.removeEventListener("knowledge-bases-updated", loadBases); window.removeEventListener("knowledge-base-selected", selected); };
   }, []);
 
   const resetForm = () => {
@@ -87,7 +113,7 @@ export function QABankManager() {
     setBusy(true);
     setStatus("Saving Q&A guidance…");
     try {
-      const response = await fetch("/api/qa-bank", {
+      const response = await fetch(`/api/qa-bank?baseId=${encodeURIComponent(baseId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -105,10 +131,12 @@ export function QABankManager() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || "Unable to save Q&A entry");
-      setBank(payload.bank);
-      resetForm();
-      setExpanded(false);
-      setStatus("Q&A guidance saved. It will be matched locally on Generate Answer.");
+      if (selectedBaseRef.current === baseId) {
+        setBank(payload.bank);
+        resetForm();
+        setExpanded(false);
+        setStatus("Q&A guidance saved.");
+      }
     } catch (error: any) {
       setStatus(error?.message || "Unable to save Q&A entry");
     } finally {
@@ -119,11 +147,13 @@ export function QABankManager() {
   const remove = async (entryId: string) => {
     setBusy(true);
     try {
-      const response = await fetch(`/api/qa-bank?entryId=${encodeURIComponent(entryId)}`, { method: "DELETE" });
+      const response = await fetch(`/api/qa-bank?baseId=${encodeURIComponent(baseId)}&entryId=${encodeURIComponent(entryId)}`, { method: "DELETE" });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || "Unable to delete Q&A entry");
-      setBank(payload.bank);
-      setStatus("Q&A entry removed.");
+      if (selectedBaseRef.current === baseId) {
+        setBank(payload.bank);
+        setStatus("Q&A entry removed.");
+      }
     } catch (error: any) {
       setStatus(error?.message || "Unable to delete Q&A entry");
     } finally {
@@ -140,15 +170,17 @@ export function QABankManager() {
     try {
       if (file.size > 2_000_000) throw new Error("Q&A JSON file exceeds the 2 MB import limit");
       const parsed = JSON.parse(await file.text());
-      const response = await fetch("/api/qa-bank", {
+      const response = await fetch(`/api/qa-bank?baseId=${encodeURIComponent(baseId)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bank: parsed, mode: "merge" }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || "Unable to import Q&A bank");
-      setBank(payload.bank);
-      setStatus(`${file.name} merged into the Q&A bank.`);
+      if (selectedBaseRef.current === baseId) {
+        setBank(payload.bank);
+        setStatus(`${file.name} merged into the Q&A bank.`);
+      }
     } catch (error: any) {
       setStatus(error?.message || "Unable to import Q&A bank");
     } finally {
@@ -170,6 +202,14 @@ export function QABankManager() {
         <span className="text-[10px] rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-1 text-violet-300">
           {bank?.enabledCount ?? 0} active
         </span>
+      </div>
+
+      <div>
+        <Label htmlFor="qa-base-edit" className="text-[11px] text-slate-400">Knowledge base</Label>
+        <select id="qa-base-edit" aria-label="Q&A knowledge base to manage" value={baseId} disabled={busy} onChange={event => window.dispatchEvent(new CustomEvent("knowledge-base-selected", { detail: { baseId: event.target.value } }))} className="mt-1 h-9 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 text-xs">
+          {bases.length === 0 && <option value="personal-knowledge">Personal knowledge</option>}
+          {bases.map(base => <option key={base.id} value={base.id}>{base.name} ({base.kind}){base.company ? ` · ${base.company}` : ""}</option>)}
+        </select>
       </div>
 
       <div className="flex gap-2">

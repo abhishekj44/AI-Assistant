@@ -242,6 +242,10 @@ function MetricsTab({ metrics }: { metrics: CompletionMetrics | null }) {
         <Metric label="HTTP headers" value={formatMs(metrics.clientResponseHeadersMs)} />
         <Metric label="First SSE" value={formatMs(metrics.clientFirstSseMs)} />
         <Metric label="Server pre-model" value={formatMs(metrics.preModelMs)} />
+        <Metric label="Retrieval" value={formatMs(metrics.retrievalMs)} />
+        <Metric label="Search engine" value={metrics.retrievalEngine || "-"} />
+        <Metric label="Retrieved items" value={metrics.retrievalItems?.toString() || "0"} />
+        <Metric label="Prompt version" value={metrics.promptVersion?.toString() || "-"} />
         <Metric label="Model connect" value={formatMs(metrics.modelConnectMs)} />
         <Metric label="First chunk wait" value={formatMs(metrics.firstChunkDelayMs)} />
         <Metric label="Model wait" value={formatMs(metrics.modelWaitMs)} />

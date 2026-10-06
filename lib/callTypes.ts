@@ -33,3 +33,8 @@ export function callTypeLabel(value: unknown): string {
   const normalized = normalizeCallType(value);
   return CALL_TYPES.find((item) => item.value === normalized)?.label || "Meeting";
 }
+
+export function conversationSpeakerLabel(speaker: "me" | "interviewer", callType?: CallType): string {
+  if (speaker === "me") return callType === "taking_interview" ? "Me (Interviewer)" : "Me";
+  return callType === "taking_interview" ? "Candidate" : callType === "giving_interview" ? "Interviewer" : "Remote";
+}

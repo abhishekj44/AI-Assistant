@@ -122,6 +122,7 @@ export class AudioTransportService {
 
   private async connectWebSocket(accessToken: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      let opened = false;
       const params = new URLSearchParams({
         model: this.selectedModel,
         encoding: "linear16",
@@ -148,6 +149,7 @@ export class AudioTransportService {
       }, 8_000);
 
       ws.onopen = () => {
+        opened = true;
         window.clearTimeout(connectionTimeout);
         this.setState("CONNECTED");
         this.flushAudioQueue();
@@ -158,6 +160,10 @@ export class AudioTransportService {
       ws.onclose = (event) => {
         window.clearTimeout(connectionTimeout);
         if (this.ws === ws) this.ws = null;
+        if (!opened) {
+          reject(new AudioTransportError(`${this.label}: speech transcription connection was rejected (${event.code})`));
+          return;
+        }
         if (!this.isIntentionalStop) {
           console.warn(`${this.label}: WebSocket closed (${event.code}); reconnecting`);
           void this.handleReconnect();

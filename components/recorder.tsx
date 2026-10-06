@@ -10,6 +10,9 @@ import { sessionManager } from "@/lib/sessionManager";
 import { transcriptStateMachine } from "@/lib/transcriptStateMachine";
 import type { SessionInfo } from "@/lib/conversationTypes";
 import { SessionInfoModal } from "@/components/SessionInfoModal";
+import { getSetting, useAppSetting } from "@/lib/clientSettings";
+import { SESSION_PERSISTENCE_EVENT } from "@/lib/sessionPersistence";
+import { interviewSpeechContext, microphonePolicy, startScopedCapture } from "@/lib/audio/capturePolicy";
 import {
   AudioTransportError,
   candidateAudioTransportService,
@@ -19,11 +22,6 @@ import {
 } from "@/lib/audio/audioTransportService";
 
 const CAPTURE_MIC_STORAGE_KEY = "meetingCopilot.captureCandidateMic";
-
-function isMicrophonePermissionError(error: unknown): boolean {
-  if (!(error instanceof DOMException)) return false;
-  return error.name === "NotAllowedError" || error.name === "PermissionDeniedError" || error.name === "SecurityError";
-}
 
 function describeAudioStartError(error: unknown): string {
   if (error instanceof AudioTransportError) {
@@ -42,10 +40,16 @@ export default function RecorderTranscriber() {
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics | null>(null);
   const [screenVideoStream, setScreenVideoStream] = useState<MediaStream | null>(null);
   const [isPreviewMinimized, setIsPreviewMinimized] = useState(false);
-  const [captureCandidateMic, setCaptureCandidateMic] = useState(false);
+  const micPreference = useAppSetting(CAPTURE_MIC_STORAGE_KEY, false);
+  const [captureInfo, setCaptureInfo] = useState<SessionInfo | null>(null);
+  const [starting, setStarting] = useState(false);
+  const takingInterview = captureInfo?.callType === "taking_interview";
+  const captureCandidateMic = takingInterview || micPreference.value;
   const [warning, setWarning] = useState<string>("");
+  const [persistence, setPersistence] = useState<{ status: string; error?: string }>({ status: "saved" });
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
-  const pendingSessionInfoRef = useRef<SessionInfo | null>(null);
+  const mediaRef = useRef<MediaStream[]>([]);
+  const startingRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stoppingRef = useRef(false);
 
@@ -57,11 +61,9 @@ export default function RecorderTranscriber() {
   }, []);
 
   useEffect(() => {
-    try {
-      setCaptureCandidateMic(localStorage.getItem(CAPTURE_MIC_STORAGE_KEY) === "true");
-    } catch {
-      // Storage can be unavailable in private/restricted browser contexts.
-    }
+    const update = (event: Event) => setPersistence((event as CustomEvent<{ status: string; error?: string }>).detail);
+    window.addEventListener(SESSION_PERSISTENCE_EVENT, update);
+    return () => window.removeEventListener(SESSION_PERSISTENCE_EVENT, update);
   }, []);
 
   useEffect(() => {
@@ -71,13 +73,8 @@ export default function RecorderTranscriber() {
   }, [screenVideoStream]);
 
   const updateCaptureCandidateMic = useCallback((enabled: boolean) => {
-    setCaptureCandidateMic(enabled);
-    try {
-      localStorage.setItem(CAPTURE_MIC_STORAGE_KEY, String(enabled));
-    } catch {
-      // The preference is optional; never block transcription on localStorage.
-    }
-  }, []);
+    void micPreference.setValue(enabled).catch((error) => setWarning(error instanceof Error ? error.message : "Microphone preference save failed"));
+  }, [micPreference.setValue]);
 
   const stopAll = useCallback(async () => {
     if (stoppingRef.current) return;
@@ -87,107 +84,82 @@ export default function RecorderTranscriber() {
         interviewerAudioTransportService.stop(),
         candidateAudioTransportService.stop(),
       ]);
-      screenVideoStream?.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+      mediaRef.current.forEach(stream => stream.getTracks().forEach(track => track.stop()));
+      mediaRef.current = [];
       setScreenVideoStream(null);
+      setCaptureInfo(null);
       if (videoRef.current) videoRef.current.srcObject = null;
       await sessionManager.endSession();
     } finally {
       stoppingRef.current = false;
     }
-  }, [screenVideoStream]);
+  }, []);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (sessionInfo: SessionInfo) => {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
+    setCaptureInfo(sessionInfo);
     setWarning("");
-    let displayMedia: MediaStream | null = null;
-    let micMedia: MediaStream | null = null;
-    let micWarning = "";
-
     try {
-      displayMedia = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } as any,
-      });
-      const systemAudio = displayMedia.getAudioTracks();
-      if (systemAudio.length === 0) throw new Error("No shared system audio. Enable 'Share audio' in the browser picker.");
-
-      const videoTracks = displayMedia.getVideoTracks();
-      if (videoTracks.length > 0) {
-        const videoStream = new MediaStream(videoTracks);
-        setScreenVideoStream(videoStream);
-        videoTracks[0].addEventListener("ended", () => void stopAll(), { once: true });
-      }
-
-      // Microphone capture is an optional enhancement. Never request permission unless
-      // the user explicitly enables it, and never fail interviewer transcription if it is denied.
-      if (captureCandidateMic) {
+      let speechContext = interviewSpeechContext(sessionInfo, sessionInfo.callType === "taking_interview" ? "" : getSetting("bg", ""));
+      const loadSpeechContext = async () => {
+        if (sessionInfo.callType === "taking_interview") return;
         try {
-          micMedia = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-            video: false,
-          });
-        } catch (error) {
-          micWarning = isMicrophonePermissionError(error)
-            ? "Microphone permission was denied. Continuing in remote-audio-only mode. Your microphone audio will not be available for follow-up context."
-            : "Microphone capture could not start. Continuing in remote-audio-only mode.";
-          console.warn("Optional candidate microphone unavailable; continuing without it", error);
-        }
-      }
-
-      transcriptStateMachine.reset();
-      const sessionInfo = pendingSessionInfoRef.current || undefined;
-      pendingSessionInfoRef.current = null;
-      sessionManager.startSession(sessionInfo);
-      const background = localStorage.getItem("bg") || "";
-      const sessionTerms = [sessionInfo?.company].filter((value): value is string => Boolean(value?.trim()));
-      let speechContext = [background, ...sessionTerms.map((term) => `[TERM] ${term}`)].filter(Boolean).join("\n");
-      try {
         const knowledgeResponse = await fetch("/api/knowledge", { cache: "no-store" });
         if (knowledgeResponse.ok) {
           const knowledge = await knowledgeResponse.json();
           const keyterms = Array.isArray(knowledge?.keyterms) ? knowledge.keyterms.filter((value: unknown) => typeof value === "string") : [];
-          speechContext = [background, ...sessionTerms.map((term) => `[TERM] ${term}`), ...keyterms.map((term: string) => `[TERM] ${term}`)].filter(Boolean).join("\n");
+          speechContext = [speechContext, ...keyterms.map((term: string) => `[TERM] ${term}`)].filter(Boolean).join("\n");
         }
-      } catch {
-        // Knowledge hints improve transcription but must never block audio startup.
-      }
-
-      // System/remote-participant audio is the required stream.
-      await interviewerAudioTransportService.start(new MediaStream(systemAudio), speechContext);
-
-      // Candidate audio is best-effort only.
-      if (micMedia?.getAudioTracks().length) {
-        try {
-          await candidateAudioTransportService.start(micMedia, speechContext);
-        } catch (error) {
-          console.warn("Candidate microphone transcription failed; interviewer stream remains active", error);
-          micMedia.getTracks().forEach((track: MediaStreamTrack) => track.stop());
-          micWarning = "Interviewer transcription is live, but microphone transcription could not connect. Continuing in remote-audio-only mode.";
-        }
-      }
-
-      if (micWarning) setWarning(micWarning);
+        } catch {}
+      };
+      const result = await startScopedCapture(sessionInfo, micPreference.value, {
+        getDisplay: () => navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } as MediaTrackConstraints,
+        }),
+        getMicrophone: () => navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false,
+        }),
+        startSession: () => { transcriptStateMachine.reset(); sessionManager.startSession(sessionInfo); },
+        endSession: () => sessionManager.endSession(),
+        startRemote: async stream => { await loadSpeechContext(); await interviewerAudioTransportService.start(new MediaStream(stream.getAudioTracks()), speechContext); },
+        startLocal: stream => candidateAudioTransportService.start(stream, speechContext),
+        stopRemote: () => interviewerAudioTransportService.stop(),
+        stopLocal: () => candidateAudioTransportService.stop(),
+      });
+      mediaRef.current = [result.display, ...(result.microphone ? [result.microphone] : [])];
+      const videoTracks = result.display.getVideoTracks();
+      if (videoTracks.length) setScreenVideoStream(new MediaStream(videoTracks));
+      const ended = () => {
+        if (stoppingRef.current) return;
+        setWarning(sessionInfo.callType === "taking_interview" ? "A required interview audio stream ended. Both-speaker capture stopped; reconnect to continue." : "Shared audio ended. Reconnect to continue.");
+        void stopAll();
+      };
+      result.display.getTracks().forEach(track => track.addEventListener("ended", ended, { once: true }));
+      if (microphonePolicy(sessionInfo, micPreference.value).required) result.microphone?.getTracks().forEach(track => track.addEventListener("ended", ended, { once: true }));
+      if (result.warning) setWarning(result.warning);
     } catch (error) {
-      displayMedia?.getTracks().forEach((track: MediaStreamTrack) => track.stop());
-      micMedia?.getTracks().forEach((track: MediaStreamTrack) => track.stop());
-      await Promise.allSettled([
-        interviewerAudioTransportService.stop(),
-        candidateAudioTransportService.stop(),
-      ]);
+      mediaRef.current = [];
       setScreenVideoStream(null);
+      setCaptureInfo(null);
       setWarning(describeAudioStartError(error));
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
     }
-  }, [captureCandidateMic, stopAll]);
+  }, [micPreference.value, stopAll]);
 
   const toggle = useCallback(async () => {
     const active = [interviewerState, candidateState].some((state) => ["CONNECTING", "CONNECTED", "STREAMING", "RECONNECTING"].includes(state));
-    if (active) await stopAll();
+    if (active || captureInfo) await stopAll();
     else setSessionModalOpen(true);
-  }, [candidateState, interviewerState, stopAll]);
+  }, [candidateState, interviewerState, captureInfo, stopAll]);
 
   const handleSessionConfirm = useCallback(async (info: SessionInfo) => {
     setSessionModalOpen(false);
-    pendingSessionInfoRef.current = info;
-    await connect();
+    await connect(info);
   }, [connect]);
 
   const handleSessionCancel = useCallback(() => {
@@ -196,11 +168,14 @@ export default function RecorderTranscriber() {
 
   const interviewerStreaming = ["CONNECTED", "STREAMING"].includes(interviewerState);
   const candidateStreaming = ["CONNECTED", "STREAMING"].includes(candidateState);
-  const connecting = [interviewerState, candidateState].some((state) => ["CONNECTING", "RECONNECTING"].includes(state));
-  const sessionActive = [interviewerState, candidateState].some((state) => ["CONNECTING", "CONNECTED", "STREAMING", "RECONNECTING"].includes(state));
+  const connecting = starting || [interviewerState, candidateState].some((state) => ["CONNECTING", "RECONNECTING"].includes(state));
+  const sessionActive = starting || [interviewerState, candidateState].some((state) => ["CONNECTING", "CONNECTED", "STREAMING", "RECONNECTING"].includes(state));
+  const requiredStreamWarning = takingInterview && !starting && (!interviewerStreaming || !candidateStreaming)
+    ? "Both speakers are required for Taking Interview. An audio stream is disconnected or reconnecting; context may be incomplete." : "";
 
   return (
     <div className="w-full space-y-3">
+      {micPreference.error && <p role="alert" className="text-xs text-rose-600">{micPreference.error}</p>}
       <div className="bg-white rounded-xl p-4 border border-slate-200/80 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <div className="space-y-2 flex-1">
@@ -210,7 +185,7 @@ export default function RecorderTranscriber() {
               </div>
               <div>
                 <h4 className="text-sm font-semibold text-slate-800">Call transcription</h4>
-                <p className="text-xs text-slate-500">System audio = remote participant · your microphone is optional · Nova-3 PCM streaming</p>
+                <p className="text-xs text-slate-500">{takingInterview ? "Remote candidate + local interviewer microphone (required)" : "System audio = remote participant; microphone optional"}</p>
               </div>
             </div>
 
@@ -219,13 +194,13 @@ export default function RecorderTranscriber() {
                 id="capture-candidate-mic"
                 checked={captureCandidateMic}
                 onCheckedChange={updateCaptureCandidateMic}
-                disabled={sessionActive}
+                disabled={takingInterview || sessionActive || !micPreference.ready}
                 aria-label="Capture my microphone for dual-speaker transcription"
               />
               <label htmlFor="capture-candidate-mic" className="cursor-pointer select-none">
                 <span className="block text-xs font-semibold text-slate-700">Capture my microphone</span>
                 <span className="block text-[11px] text-slate-500">
-                  {captureCandidateMic
+                  {takingInterview ? "Required: your interviewer questions are included with the candidate's answers." : captureCandidateMic
                     ? "Dual-speaker mode: your answers are included in follow-up context."
                     : "Remote-only mode: no microphone permission will be requested."}
                 </span>
@@ -234,10 +209,10 @@ export default function RecorderTranscriber() {
 
             <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium">
               <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1", interviewerStreaming ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500")}>
-                <Volume2 className="w-3 h-3" /> Remote {interviewerStreaming ? "live" : interviewerState.toLowerCase()}
+                <Volume2 className="w-3 h-3" /> {takingInterview ? "Remote candidate" : "Remote"} {interviewerStreaming ? "live" : interviewerState.toLowerCase()}
               </span>
               <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1", candidateStreaming ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-500")}>
-                <UserRound className="w-3 h-3" /> Me {captureCandidateMic ? (candidateStreaming ? "live" : candidateState.toLowerCase()) : "disabled"}
+                <UserRound className="w-3 h-3" /> {takingInterview ? "Local interviewer" : "Me"} {captureCandidateMic ? (candidateStreaming ? "live" : candidateState.toLowerCase()) : "disabled"}
               </span>
               {interviewerStreaming && latencyMetrics?.captureToFinalMs ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600 font-mono">
@@ -251,12 +226,15 @@ export default function RecorderTranscriber() {
             className={cn("h-10 px-5 font-semibold text-xs rounded-lg", interviewerStreaming ? "bg-rose-600 hover:bg-rose-700 text-white" : "bg-emerald-600 hover:bg-emerald-700 text-white")}
             size="sm"
             onClick={toggle}
-            disabled={connecting && !interviewerStreaming}
+            disabled={starting}
           >
-            {interviewerStreaming ? "Disconnect" : connecting ? "Connecting..." : "Connect Audio"}
+            {starting ? "Connecting..." : captureInfo || sessionActive ? "Disconnect" : "Connect Audio"}
           </Button>
         </div>
         {warning && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warning}</div>}
+        {requiredStreamWarning && <p role="alert" className="mt-2 text-xs text-amber-700">{requiredStreamWarning}</p>}
+        {persistence.status === "pending" && <p role="status" className="mt-2 text-[11px] text-slate-500">Saving transcript...</p>}
+        {persistence.status === "error" && <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-rose-700"><span>{persistence.error || "Transcript save failed; pending turns retained."}</span><Button variant="outline" size="sm" onClick={() => sessionManager.retryPersistence()}>Retry Save</Button></div>}
       </div>
 
       {screenVideoStream && (

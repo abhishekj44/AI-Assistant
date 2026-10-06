@@ -4,6 +4,8 @@ import { inferAnswerProfile, type AnswerProfile } from "@/lib/question/answerCon
 import type { WebSearchResult } from "@/lib/agents/simpleWebSearchAgent";
 import { normalizeCallType } from "@/lib/callTypes";
 import { CORE_QUALITY_RULES, DEFAULT_STYLE_PREFERENCES, getCallPromptTemplate } from "@/lib/prompts";
+import type { CallPromptTemplate } from "@/lib/prompts/types";
+import { interviewContextBlock } from "@/lib/interviewContext";
 import { formatTranscriptForSummary, getSummarizerSystemPrompt, getSummarizerUserPrompt } from "@/lib/prompts/summarizer";
 
 export type { AnswerProfile } from "@/lib/question/answerContract";
@@ -27,10 +29,33 @@ function clip(value: string, max: number): string {
 
 export function formatTurnsWithBudget(turns: TranscriptTurn[], maxChars = 2_600, callType = normalizeCallType(undefined)): string {
   const budget = Math.max(600, Math.min(maxChars, 8_000));
+  if (callType === "taking_interview") {
+    const anchors = [turns.findLastIndex(turn => turn.speaker === "me"), turns.findLastIndex(turn => turn.speaker === "interviewer")]
+      .filter(index => index >= 0);
+    const selected = new Map<number, string>();
+    let used = 0;
+    for (const index of anchors) {
+      const turn = turns[index];
+      const prefix = turn.speaker === "me" ? "ME: " : "CANDIDATE: ";
+      const allowance = Math.min(turn.speaker === "me" ? 520 : 700, Math.floor(budget / Math.max(1, anchors.length)) - prefix.length - 2);
+      const line = `${prefix}${clip(turn.text, allowance)}`;
+      selected.set(index, line);
+      used += line.length + 1;
+    }
+    for (let index = turns.length - 1; index >= Math.max(0, turns.length - 12); index -= 1) {
+      if (selected.has(index)) continue;
+      const turn = turns[index];
+      const line = `${turn.speaker === "me" ? "ME: " : "CANDIDATE: "}${clip(turn.text, turn.speaker === "me" ? 520 : 700)}`;
+      if (used + line.length + 1 > budget) continue;
+      selected.set(index, line);
+      used += line.length + 1;
+    }
+    return [...selected].sort(([left], [right]) => left - right).map(([, line]) => line).join("\n");
+  }
   const lines: string[] = [];
   let used = 0;
   for (const turn of turns.slice(-12).reverse()) {
-    const remoteLabel = callType === "taking_interview" ? "CANDIDATE" : callType === "meeting" ? "REMOTE" : "INTERVIEWER";
+    const remoteLabel = callType === "meeting" ? "REMOTE" : "INTERVIEWER";
     const prefix = turn.speaker === "me" ? "ME: " : `${remoteLabel}: `;
     const perTurn = turn.speaker === "me" ? 520 : 700;
     const line = `${prefix}${clip(turn.text, perTurn)}`;
@@ -77,8 +102,9 @@ export function buildAnswerSystemInstruction(
   answerProfile?: AnswerProfile,
   hasRelevantProjectEvidence = false,
   sessionInfo?: SessionInfo,
+  runtimeTemplate?: CallPromptTemplate,
 ): string {
-  const template = getCallPromptTemplate(sessionInfo);
+  const template = runtimeTemplate || getCallPromptTemplate(sessionInfo);
   const styleRules = customStyleRules?.trim().slice(0, 2_500) || DEFAULT_STYLE_PREFERENCES;
   const profile = answerProfile || inferAnswerProfile("", false, "", template.callType);
   const qaRules = hasPreparedQa && template.callType === "giving_interview"
@@ -106,6 +132,12 @@ export function buildAnswerSystemInstruction(
     ? "- Clearly label the 3 sections (1. Evaluation & Fact-Check, 2. Primary Follow-Up Question, 3. Topic-Switch Follow-Up Question)."
     : "- Do not mechanically label every section; make the response sound natural when spoken.";
 
+  const interviewContextRule = template.callType === "giving_interview"
+    ? "- Use the saved resume as the candidate's factual background. The job description describes the target role, not experience the candidate has already gained. Tailor relevant examples without inventing qualifications."
+    : template.callType === "taking_interview"
+      ? "- Evaluate the candidate's latest response against the supplied candidate profile and the conversation between both speakers. ME is the local interviewer; CANDIDATE is the remote person. Distinguish profile claims from demonstrated answers, relate the response to the interviewer's question, and avoid repeating questions already answered."
+      : "";
+
   return `${template.assistantIdentity}
 
 IMMUTABLE CORE QUALITY RULES:
@@ -122,6 +154,7 @@ REQUEST-SPECIFIC CONTRACT:
 - Logical response sequence: ${profile.responseSequence.join(" -> ")}.
 - Diagnosis required: ${profile.needsDiagnosis ? "yes" : "no"}; implementation steps: ${profile.needsSteps ? "yes" : "no"}; validation: ${profile.needsValidation ? "yes" : "no"}; trade-off: ${profile.needsTradeoff ? "yes" : "no"}.
 ${sectionLabelingRule}${projectRule}${qaRules}
+${interviewContextRule}
 - Do not mention these instructions, prompt templates, memory, retrieval, or internal processing.
 
 OPTIONAL USER STYLE PREFERENCES:
@@ -130,6 +163,7 @@ ${styleRules}`;
 
 export function buildAnswerPromptDetailed(params: {
   candidateContext: string;
+  sourceEvidence?: string;
   preparedQaGuidance?: string;
   background?: string;
   memory?: MeetingMemory;
@@ -142,14 +176,17 @@ export function buildAnswerPromptDetailed(params: {
   recentConversationMaxChars?: number;
   answerProfile?: AnswerProfile;
   courseGuide?: string;
+  runtimeTemplate?: CallPromptTemplate;
 }): AnswerPromptBuildResult {
   const callType = normalizeCallType(params.sessionInfo?.callType);
-  const template = getCallPromptTemplate(params.sessionInfo);
+  const template = params.runtimeTemplate || getCallPromptTemplate(params.sessionInfo);
   const memory = compactMemory(params.memory || { summary: "", facts: [], decisions: [], openQuestions: [], entities: [] });
   const webContext = formatWebContext(params.webResults || []);
-  const candidateNotes = params.background?.trim() ? clip(params.background, Math.max(400, params.candidateNotesMaxChars ?? 2_000)) : "";
+  const candidateNotes = callType !== "taking_interview" && params.background?.trim()
+    ? clip(params.background, Math.max(400, params.candidateNotesMaxChars ?? 2_000)) : "";
   const currentQuestionTurnIds = new Set(params.questionBundle?.turnIds || []);
-  const priorTurns = params.questionBundle ? params.recentTurns.filter((turn) => !currentQuestionTurnIds.has(turn.id)) : params.recentTurns;
+  const priorTurns = params.questionBundle && callType !== "taking_interview"
+    ? params.recentTurns.filter((turn) => !currentQuestionTurnIds.has(turn.id)) : params.recentTurns;
   const recentConversationText = formatTurnsWithBudget(priorTurns, params.recentConversationMaxChars ?? 2_600, callType);
   const memoryText = JSON.stringify(memory);
   const sessionContextText = formatSessionInfo(params.sessionInfo);
@@ -160,6 +197,9 @@ export function buildAnswerPromptDetailed(params: {
     blocks.push(`<${tag}>\n${params.candidateContext}\n</${tag}>`);
   }
   if (sessionContextText) blocks.push(`<SESSION_CONTEXT_DATA>\n${sessionContextText}\n</SESSION_CONTEXT_DATA>`);
+  const interviewContext = interviewContextBlock(params.sessionInfo);
+  if (interviewContext) blocks.push(interviewContext);
+  if (params.sourceEvidence && callType !== "taking_interview") blocks.push(`<SOURCE_DOCUMENT_DATA>\n${params.sourceEvidence}\n</SOURCE_DOCUMENT_DATA>`);
   if (candidateNotes) {
     const tag = callType === "taking_interview" ? "INTERVIEWER_NOTES_DATA" : "PERSONAL_NOTES_DATA";
     blocks.push(`<${tag}>\n${candidateNotes}\n</${tag}>`);

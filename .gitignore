@@ -27,6 +27,11 @@ yarn-error.log*
 # TypeScript cache
 *.tsbuildinfo
 
+*.db
+*.db-wal
+*.db-shm
+/backups/
+
 docs/*
 sessions/*
 scripts/*

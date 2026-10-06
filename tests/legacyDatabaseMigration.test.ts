@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import Database from "better-sqlite3";
+import { migrateDatabase } from "../lib/server/db/migrations";
+import { migrateLegacyData } from "../lib/server/db/legacyMigration";
+import { SessionRepository } from "../lib/server/repositories/sessionRepository";
+import { KnowledgeRepository } from "../lib/server/repositories/knowledgeRepository";
+import { EMPTY_KNOWLEDGE_PACK } from "../lib/knowledge/types";
+
+const now = "2024-01-02T03:04:05.000Z";
+test("legacy files import without caps, jobs or loss and repeat without overwrites", context => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-import-"));
+  const database = new Database(":memory:");
+  database.pragma("foreign_keys=ON");
+  migrateDatabase(database);
+  context.after(() => { database.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  fs.mkdirSync(path.join(root, "data", "sessions"), { recursive: true });
+  const write = (name: string, value: unknown) => fs.writeFileSync(path.join(root, "data", name), JSON.stringify(value));
+  write("sessions/session.json", { id: "session", startedAt: now, endedAt: now, sessionInfo: { callType: "screen", modeVariant: "course_admission" }, transcripts: Array.from({ length: 140 }, (_, index) => ({ speaker: index % 2 ? "LOCAL" : "interviewer", text: ` turn ${index} `, timestamp: now })) });
+  write("candidate-knowledge.json", { updatedAt: now, facts: ["source-less fact"], skills: ["SQLite"] });
+  const answer = "answer ".repeat(1000);
+  const entries = Array.from({ length: 60 }, (_, index) => ({ id: `qa-${index}`, questions: ["Identical question", ...Array.from({ length: 15 }, (_, number) => `Variant ${number}`)], answer, keyPoints: [], tags: [], createdAt: now, updatedAt: now, enabled: true, priority: 5 }));
+  write("qa-bank.json", { updatedAt: now, entries });
+  write("qa-history.json", Array.from({ length: 160 }, (_, index) => ({ id: `run-${index}`, question: "Question", answer: "Answer", createdAt: now, sessionId: "session", callType: "screen", variant: "course_admission", feedback: "good", promotedQaEntryId: index === 0 ? "qa-0" : undefined })));
+  const report = migrateLegacyData(database, root);
+  assert.deepEqual(report.sources.map(source => source.status), ["COMPLETE", "COMPLETE", "COMPLETE", "COMPLETE"]);
+  assert.equal((database.prepare("SELECT count(*) AS count FROM model_runs").get() as { count: number }).count, 160);
+  assert.equal((database.prepare("SELECT count(*) AS count FROM background_jobs").get() as { count: number }).count, 0);
+  const turn = database.prepare("SELECT * FROM transcript_turns WHERE sequence_no=1").get() as { text: string; client_turn_id: string; metadata_json: string; speaker: string };
+  assert.equal(turn.text, " turn 0 "); assert.equal(turn.speaker, "REMOTE"); assert.match(turn.client_turn_id, /^legacy-/);
+  assert.equal(JSON.parse(turn.metadata_json).legacy.speaker, "interviewer");
+  const qa = database.prepare("SELECT data_json,origin_run_id FROM knowledge_entries WHERE kind='QA' AND origin_run_id='run-0'").get() as { data_json: string; origin_run_id: string };
+  assert.equal(JSON.parse(qa.data_json).answer, answer); assert.equal(JSON.parse(qa.data_json).questions.length, 16);
+  assert.equal((database.prepare("SELECT variant_snapshot FROM model_requests LIMIT 1").get() as { variant_snapshot: string }).variant_snapshot, "course_admission");
+  assert.ok(new KnowledgeRepository(database).getPack().facts.includes("source-less fact"));
+  assert.equal((database.prepare("SELECT updated_at FROM knowledge_entries WHERE origin_run_id='run-0'").get() as { updated_at: string }).updated_at, now);
+  assert.deepEqual(migrateLegacyData(database, root).sources.map(source => source.status), ["SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED"]);
+  assert.ok(fs.existsSync(path.join(root, "data", "qa-bank.json")));
+  write("qa-bank.json", { updatedAt: now, entries: [] });
+  assert.match(migrateLegacyData(database, root).sources.find(source => source.sourceKey === "qa-bank.json")!.error!, /changed/);
+});
+
+test("invalid source rolls back rows and receipt, reports failure, and can retry", context => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-invalid-"));
+  const database = new Database(":memory:"); migrateDatabase(database);
+  context.after(() => { database.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  fs.mkdirSync(path.join(root, "data"));
+  const filename = path.join(root, "data", "qa-history.json");
+  fs.writeFileSync(filename, JSON.stringify([{ id: "first", answer: "Answer", createdAt: now }, { id: "bad", answer: "Answer", createdAt: now, variant: "bad" }]));
+  assert.equal(migrateLegacyData(database, root).sources[0].status, "ERROR");
+  assert.equal((database.prepare("SELECT count(*) AS count FROM model_runs").get() as { count: number }).count, 0);
+  assert.equal((database.prepare("SELECT count(*) AS count FROM import_receipts").get() as { count: number }).count, 0);
+  fs.writeFileSync(filename, JSON.stringify([{ id: "first", answer: "Answer", createdAt: now }]));
+  assert.equal(migrateLegacyData(database, root).sources[0].status, "COMPLETE");
+});
+
+test("imports refuse live-owned sessions and existing knowledge, with no receipts", context => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-conflict-"));
+  const database = new Database(":memory:"); database.pragma("foreign_keys=ON"); migrateDatabase(database);
+  context.after(() => { database.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  fs.mkdirSync(path.join(root, "data", "sessions"), { recursive: true });
+  new SessionRepository(database).start({ id: "owned", ownerTabId: "owner", startedAt: now });
+  new KnowledgeRepository(database).replacePack({ ...structuredClone(EMPTY_KNOWLEDGE_PACK), facts: ["live fact"] });
+  fs.writeFileSync(path.join(root, "data", "sessions", "owned.json"), JSON.stringify({ id: "owned", startedAt: now, transcripts: [], summary: "legacy summary" }));
+  fs.writeFileSync(path.join(root, "data", "candidate-knowledge.json"), JSON.stringify({ updatedAt: now, facts: ["legacy fact"] }));
+  assert.deepEqual(migrateLegacyData(database, root).sources.map(source => source.status), ["ERROR", "ERROR"]);
+  assert.equal(new SessionRepository(database).get("owned")!.ownerTabId, "owner");
+  assert.deepEqual(new KnowledgeRepository(database).getPack().facts, ["live fact"]);
+  assert.equal((database.prepare("SELECT count(*) AS count FROM import_receipts").get() as { count: number }).count, 0);
+});
+
+test("repeated session snapshots merge unique turns instead of losing later speech", context => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-snapshots-"));
+  const database = new Database(":memory:");
+  database.pragma("foreign_keys=ON");
+  migrateDatabase(database);
+  context.after(() => { database.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  fs.mkdirSync(path.join(root, "sessions"));
+  const first = { id: "same-session", startedAt: now, endedAt: now, summary: "First summary", transcripts: [{ id: "one", sequenceId: 1, speaker: "external", text: "First turn", timestamp: now }] };
+  const second = { ...first, endedAt: "2024-01-02T04:00:00.000Z", summary: "Latest summary", transcripts: [...first.transcripts, { id: "two", sequenceId: 2, speaker: "me", text: "Second turn", timestamp: now }] };
+  fs.writeFileSync(path.join(root, "sessions", "a.json"), JSON.stringify(first));
+  fs.writeFileSync(path.join(root, "sessions", "b.json"), JSON.stringify(second));
+  assert.deepEqual(migrateLegacyData(database, root).sources.map(source => source.status), ["COMPLETE", "COMPLETE"]);
+  const session = new SessionRepository(database).get(first.id)!;
+  assert.equal(session.transcripts.length, 2);
+  assert.equal(session.summary, "Latest summary");
+  assert.equal(session.memory.summary, "Latest summary");
+});
