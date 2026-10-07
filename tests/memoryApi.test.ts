@@ -15,8 +15,8 @@ for (const outcome of ["valid", "outbox", "invalid", "failure", "abort"] as cons
     const prompts = new PromptRepository(database);
     const runs = new ModelRunRepository(database);
     const sessions = new SessionRepository(database);
-    const original = prompts.getActive("MEMORY", "MEETING");
-    const active = prompts.update({ id: original.id, baseVersion: 1, system_template: "Custom memory style", user_template: "NEW MEMORY {{previousMemory}}\n{{recentTurns}}" });
+    const original = prompts.get("MEMORY", "MEETING");
+    prompts.update({ key: original.template_key, system_template: "Custom memory style", user_template: "NEW MEMORY {{previousMemory}}\n{{recentTurns}}" });
     sessions.start({ id: "session", ownerTabId: "tab", sessionInfo: { callType: "meeting", company: "", details: "" } });
     const turns = [{ id: "turn", sequenceId: 1, speaker: "me" as const, text: 'Fact "quoted" {{literal}}', timestamp: new Date().toISOString() }];
     sessions.appendTurns("session", turns, "tab");
@@ -36,8 +36,8 @@ for (const outcome of ["valid", "outbox", "invalid", "failure", "abort"] as cons
     const response = await POST(new Request("http://localhost/api/memory", { method: "POST", signal: controller.signal, body: JSON.stringify({ previousMemory: EMPTY_MEETING_MEMORY, turns, sessionInfo: { callType: "meeting" }, ...(outcome === "outbox" ? {} : { sessionId: "session", ownerTabId: "tab", coveredThroughSequence: 1 }) }) }));
     const completed = outcome === "valid" || outcome === "outbox";
     assert.equal(response.status, completed ? 200 : 500);
-    const request = database.prepare("SELECT * FROM model_requests WHERE purpose='MEMORY'").get() as { prompt_id: string };
-    assert.equal(request.prompt_id, active.id);
+    const request = database.prepare("SELECT * FROM model_requests WHERE purpose='MEMORY'").get() as { prompt_key: string };
+    assert.equal(request.prompt_key, original.template_key);
     const run = database.prepare("SELECT * FROM model_runs").get() as { status: string; finished_at: string };
     assert.equal(run.status, completed ? "COMPLETED" : outcome === "abort" ? "INTERRUPTED" : "FAILED");
     assert.ok(run.finished_at);

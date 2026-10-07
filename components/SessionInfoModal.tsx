@@ -22,7 +22,9 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
   const [company, setCompany] = useState("");
   const [callType, setCallType] = useState<CallType | null>(null);
   const [details, setDetails] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
   const [jobDescription, setJobDescription] = useState("");
+  const [seniority, setSeniority] = useState("");
   const [candidateProfile, setCandidateProfile] = useState("");
   const [resumeSummary, setResumeSummary] = useState("No saved resume");
   const [basesError, setBasesError] = useState("");
@@ -36,7 +38,9 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
   const companyRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setJobTitle("");
     setJobDescription("");
+    setSeniority("");
     setCandidateProfile("");
     setDetails("");
     setSaving(false);
@@ -85,7 +89,7 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
   }, [open, callType]);
 
   const handleCancel = useCallback(() => {
-    setJobDescription(""); setCandidateProfile(""); setDetails("");
+    setJobTitle(""); setJobDescription(""); setSeniority(""); setCandidateProfile(""); setDetails("");
     onCancel();
   }, [onCancel]);
 
@@ -95,7 +99,9 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
       company: company.trim(),
       callType,
       details: details.trim(),
+      jobTitle,
       jobDescription,
+      seniority,
       candidateProfile,
       modeVariant: (callType === "taking_interview" && isCourseAdmission) ? "course_admission" : "standard",
       knowledgeBaseIds,
@@ -111,10 +117,12 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
     setCompany("");
     setCallType(null);
     setDetails("");
+    setJobTitle("");
     setJobDescription("");
+    setSeniority("");
     setCandidateProfile("");
     setIsCourseAdmission(false);
-  }, [company, callType, details, jobDescription, candidateProfile, isCourseAdmission, onConfirm, settingsReady, basesReady, knowledgeBaseIds, saving]);
+  }, [company, callType, details, jobTitle, jobDescription, seniority, candidateProfile, isCourseAdmission, onConfirm, settingsReady, basesReady, knowledgeBaseIds, saving]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && callType) {
@@ -159,7 +167,7 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
                 <button
                   key={type.value}
                   type="button"
-                  onClick={() => { setCallType(type.value); setError(""); setJobDescription(""); setCandidateProfile(""); setKnowledgeBaseIds(type.value === "taking_interview" ? [] : ["personal-knowledge"]); }}
+                  onClick={() => { setCallType(type.value); setError(""); setJobTitle(""); setJobDescription(""); setSeniority(""); setCandidateProfile(""); setKnowledgeBaseIds(type.value === "taking_interview" ? [] : ["personal-knowledge"]); }}
                   className={`rounded-xl border p-3 text-left transition-all ${callType === type.value ? "border-indigo-500 bg-indigo-500/15 ring-1 ring-indigo-500/30" : "border-slate-700 bg-slate-800/50 hover:border-slate-600"}`}
                 >
                   <div className={`text-xs font-semibold ${callType === type.value ? "text-indigo-300" : "text-slate-200"}`}>{type.label}</div>
@@ -194,6 +202,16 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
 
           {callType === "giving_interview" && <div><span className="mb-1.5 block text-xs font-semibold text-slate-300">Resume</span><p className="text-sm text-slate-300">{resumeSummary}</p></div>}
 
+          {callType === "giving_interview" && <div>
+            <label htmlFor="session-job-title" className="mb-1.5 block text-xs font-semibold text-slate-300">Job title</label>
+            <input id="session-job-title" type="text" value={jobTitle} disabled={saving} onChange={event => setJobTitle(event.target.value)} placeholder="e.g. Backend Engineer" maxLength={200} className="w-full rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500" />
+          </div>}
+
+          <div>
+            <label htmlFor="session-company" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-300"><Building2 className="h-3.5 w-3.5 text-indigo-400" /> {callType === "giving_interview" ? "Company (optional)" : "Company / Organization"}</label>
+            <input ref={companyRef} id="session-company" type="text" value={company} disabled={!settingsReady || saving} onChange={(event) => setCompany(event.target.value)} placeholder="e.g. NVIDIA, NTT DATA" className="w-full rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500" maxLength={200} />
+          </div>
+
           {(callType === "giving_interview" || callType === "taking_interview") && (
             <div>
               <label htmlFor="session-interview-context" className="mb-1.5 block text-xs font-semibold text-slate-300">{callType === "giving_interview" ? "Job description" : "Candidate profile"} <span className="text-rose-400">*</span></label>
@@ -201,6 +219,14 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
               <p id="session-context-state" className="mt-1 text-xs text-slate-400">{!(callType === "giving_interview" ? jobDescription : candidateProfile).trim() ? "Required for this session." : `${(callType === "giving_interview" ? jobDescription : candidateProfile).length} / 12000`}</p>
             </div>
           )}
+
+          {callType === "giving_interview" && <div>
+            <label htmlFor="session-seniority" className="mb-1.5 block text-xs font-semibold text-slate-300">Seniority</label>
+            <select id="session-seniority" value={seniority} disabled={saving} onChange={event => setSeniority(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500">
+              <option value="">Not specified</option>
+              {["Entry-level", "Junior", "Mid-level", "Senior", "Lead", "Staff", "Principal", "Manager", "Director", "Executive"].map(level => <option key={level} value={level}>{level}</option>)}
+            </select>
+          </div>}
 
           {callType === "taking_interview" && <div className="flex items-center gap-3"><Switch id="session-required-mic" checked disabled aria-label="Include my microphone" /><label htmlFor="session-required-mic" className="text-xs text-slate-300">Include my microphone <span className="block text-slate-400">Required for both speakers. Browser permission is requested after Start Session.</span></label></div>}
 
@@ -213,19 +239,14 @@ export function SessionInfoModal({ open, onConfirm, onCancel }: SessionInfoModal
           </div>}
 
           <div>
-            <label htmlFor="session-company" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-300"><Building2 className="h-3.5 w-3.5 text-indigo-400" /> Company / Organization</label>
-            <input ref={companyRef} id="session-company" type="text" value={company} disabled={!settingsReady || saving} onChange={(event) => setCompany(event.target.value)} placeholder="e.g. NVIDIA, NTT DATA" className="w-full rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500" maxLength={200} />
-          </div>
-
-          <div>
-            <label htmlFor="session-details" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-300"><FileText className="h-3.5 w-3.5 text-indigo-400" /> Details</label>
-            <textarea id="session-details" value={details} onChange={(event) => setDetails(event.target.value)} placeholder="e.g. Senior AI Engineer — Round 2 System Design, architecture review, weekly project sync" rows={2} className="w-full resize-none rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500" maxLength={1000} />
+            <label htmlFor="session-details" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-300"><FileText className="h-3.5 w-3.5 text-indigo-400" /> {callType === "giving_interview" ? "Additional context" : "Details"}</label>
+            <textarea id="session-details" value={details} disabled={saving} onChange={(event) => setDetails(event.target.value)} placeholder={callType === "giving_interview" ? "e.g. Second-round architecture interview, focus on reliability" : "e.g. Senior AI Engineer — Round 2 System Design, architecture review, weekly project sync"} rows={2} className="w-full resize-none rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500" maxLength={1000} />
           </div>
         </div>
 
         <div className="mt-6 flex items-center justify-end gap-3">
           <Button type="button" variant="ghost" size="sm" onClick={handleCancel} className="h-9 border border-slate-700 px-4 text-xs text-slate-400 hover:text-white">Cancel</Button>
-          <Button type="button" size="sm" onClick={() => void handleConfirm()} disabled={!callType || !settingsReady || saving || Boolean(callType && sessionSetupError({ company, details, callType, jobDescription, candidateProfile, knowledgeBaseIds }, basesReady))} className="h-9 bg-emerald-600 px-5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"><Play className="mr-1.5 h-3.5 w-3.5" /> {saving ? "Saving..." : "Start Session"}</Button>
+          <Button type="button" size="sm" onClick={() => void handleConfirm()} disabled={!callType || !settingsReady || saving || Boolean(callType && sessionSetupError({ company, details, callType, jobTitle, jobDescription, seniority, candidateProfile, knowledgeBaseIds }, basesReady))} className="h-9 bg-emerald-600 px-5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"><Play className="mr-1.5 h-3.5 w-3.5" /> {saving ? "Saving..." : "Start Session"}</Button>
         </div>
         <p className="mt-3 text-center text-[10px] text-slate-500">Select a call type to continue · Ctrl+Enter to start · Esc to cancel</p>
       </div>

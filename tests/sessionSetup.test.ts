@@ -16,9 +16,25 @@ test("Giving always uses the saved default resume and requires a job description
   assert.match(sessionSetupError({ ...info, jobDescription: "x".repeat(12001) }), /12,000/);
 });
 
+test("Giving accepts role details with an optional company and trims them per session", () => {
+  const info = prepareSessionInfo({ company: "", details: "Architecture round", callType: "giving_interview",
+    jobTitle: "  Backend Engineer  ", jobDescription: "  Build reliable queues  ", seniority: "  Senior  " });
+  assert.equal(sessionSetupError(info, false), "");
+  assert.equal(info.company, "");
+  assert.equal(info.jobTitle, "Backend Engineer");
+  assert.equal(info.jobDescription, "Build reliable queues");
+  assert.equal(info.seniority, "Senior");
+  assert.equal(info.details, "Architecture round");
+  assert.match(sessionSetupError({ ...info, jobTitle: "x".repeat(201) }), /Job title/);
+  assert.match(sessionSetupError({ ...info, seniority: "x".repeat(101) }), /Seniority/);
+});
+
 test("Taking uses no personal base or background and requires its own private candidate profile", () => {
-  const info = prepareSessionInfo({ ...common, callType: "taking_interview", knowledgeBaseIds: ["personal-knowledge"], jobDescription: "Private JD" });
+  const info = prepareSessionInfo({ ...common, callType: "taking_interview", knowledgeBaseIds: ["personal-knowledge"],
+    jobTitle: "Private title", seniority: "Private seniority", jobDescription: "Private JD" });
   assert.deepEqual(info.knowledgeBaseIds, []);
+  assert.equal(info.jobTitle, undefined);
+  assert.equal(info.seniority, undefined);
   assert.equal(info.jobDescription, undefined);
   assert.match(sessionSetupError(info, false), /Candidate profile/);
   const complete = { ...info, candidateProfile: "Candidate knows Rust" };
@@ -68,9 +84,9 @@ test("Modal enforces Ctrl+Enter, resets private profiles, and never saves them a
     if (options?.method === "POST") {
       const body = JSON.parse(String(options.body));
       patches.push(body.patch);
-      return Response.json({ committed: true, settings: Object.entries(body.patch).map(([key, value]) => ({ key, value, revision: 1 })) });
+      return Response.json({ committed: true, settings: Object.entries(body.patch).map(([key, value]) => ({ key, value })) });
     }
-    if (String(url) === "/api/settings") return Response.json({ settings: [{ key: "meetingCopilot.lastCompany", value: "Saved company", revision: 1 }] });
+    if (String(url) === "/api/settings") return Response.json({ settings: [{ key: "meetingCopilot.lastCompany", value: "Saved company" }] });
     if (String(url) === "/api/knowledge") return Response.json({ profile: { headline: "Saved engineer" }, sources: [{ type: "resume", filename: "resume.pdf" }] });
     throw new Error("Knowledge bases must not be needed for interview setup");
   }) as typeof fetch;
@@ -118,26 +134,40 @@ test("Modal enforces Ctrl+Enter, resets private profiles, and never saves them a
     const savedInfo = confirmed as SessionInfo | undefined;
     assert.equal(savedInfo?.candidateProfile, "Candidate B: Go");
     assert.deepEqual(savedInfo?.knowledgeBaseIds, []);
-    assert.ok(patches.every(patch => !Object.keys(patch).some(key => /candidateProfile|jobDescription/.test(key))));
+    assert.ok(patches.every(patch => !Object.keys(patch).some(key => /candidateProfile|jobDescription|jobTitle|seniority/.test(key))));
     assert.ok(!requests.includes("/api/knowledge-bases"));
     render(); open = true; render(); await flush(); tree = render();
     choose(tree, "Giving Interview"); render(); await flush(); tree = render();
     assert.ok(elements(tree).some(element => element.props.children === "Saved engineer"));
+    assert.equal(find(tree, element => element.props.id === "session-job-title").props.value, "");
+    assert.equal(find(tree, element => element.props.id === "session-seniority").props.value, "");
+    assert.ok(React.Children.toArray(find(tree, element => element.props.htmlFor === "session-details").props.children).includes("Additional context"));
     assert.equal(find(tree, element => element.props.id === "session-interview-context").props.value, "");
     assert.equal(find(tree, element => element.props.id === "session-interview-context").props.maxLength, 12000);
+    find(tree, element => element.props.id === "session-job-title").props.onChange({ target: { value: "  Backend Engineer  " } });
+    find(tree, element => element.props.id === "session-company").props.onChange({ target: { value: "" } });
     find(tree, element => element.props.id === "session-interview-context").props.onChange({ target: { value: "Target role: distributed systems engineer" } });
+    find(tree, element => element.props.id === "session-seniority").props.onChange({ target: { value: "Senior" } });
+    find(tree, element => element.props.id === "session-details").props.onChange({ target: { value: "  Architecture round  " } });
     tree = render();
     submitWithKeyboard(tree);
     await flush();
     const givingInfo = confirmed as SessionInfo | undefined;
     assert.deepEqual(givingInfo?.knowledgeBaseIds, ["personal-knowledge"]);
+    assert.equal(givingInfo?.jobTitle, "Backend Engineer");
+    assert.equal(givingInfo?.company, "");
     assert.equal(givingInfo?.jobDescription, "Target role: distributed systems engineer");
+    assert.equal(givingInfo?.seniority, "Senior");
+    assert.equal(givingInfo?.details, "Architecture round");
     assert.equal(givingInfo?.candidateProfile, undefined);
-    assert.ok(patches.every(patch => !Object.keys(patch).some(key => /candidateProfile|jobDescription/.test(key))));
+    assert.ok(patches.every(patch => !Object.keys(patch).some(key => /candidateProfile|jobDescription|jobTitle|seniority/.test(key))));
     render(); open = true; render(); await flush(); tree = render();
     globalThis.fetch = (async url => String(url) === "/api/knowledge" ? Response.json({ error: "No pack" }, { status: 404 }) : Response.json({ settings: [] })) as typeof fetch;
     choose(tree, "Giving Interview"); render(); await flush(); tree = render();
     assert.ok(elements(tree).some(element => element.props.children === "No saved resume"));
+    assert.equal(find(tree, element => element.props.id === "session-job-title").props.value, "");
+    assert.equal(find(tree, element => element.props.id === "session-seniority").props.value, "");
+    assert.equal(find(tree, element => element.props.id === "session-details").props.value, "");
     assert.equal(find(tree, element => element.props.id === "session-interview-context").props.value, "");
     find(tree, element => element.props.id === "session-interview-context").props.onChange({ target: { value: "New role" } });
     tree = render();

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_PROMPT_RULES, PROMPT_RULES_VERSION, PROMPT_STYLE_STORAGE_KEY, PROMPT_RULES_VERSION_STORAGE_KEY, PREVIOUS_PROMPT_STYLE_STORAGE_KEY, LEGACY_PROMPT_RULES_BACKUP_KEY } from "./utils";
 
-type Setting = { key: string; value: unknown; revision: number };
+type Setting = { key: string; value: unknown };
 const cache = new Map<string, Setting>();
 let hydration: Promise<void> | undefined;
 let queue = Promise.resolve();
@@ -24,13 +24,10 @@ async function reload() {
   if (!response.ok || !Array.isArray(data.settings)) throw new Error(data.error || "Unable to load settings");
   accept(data.settings);
 }
-async function commit(patch: Record<string, unknown>, expectedRevisions: Record<string, number>) {
-  const response = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patch, expectedRevisions }) });
+async function commit(patch: Record<string, unknown>) {
+  const response = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patch }) });
   const data = await response.json();
-  if (!response.ok || !data.committed) {
-    if (response.status === 409) await reload();
-    throw new Error(data.error || "Settings save failed");
-  }
+  if (!response.ok || !data.committed) throw new Error(data.error || "Settings save failed");
   accept(data.settings);
 }
 async function migrate() {
@@ -53,7 +50,7 @@ async function migrate() {
   }
   if (PROMPT_STYLE_STORAGE_KEY in patch && !cache.has(PROMPT_RULES_VERSION_STORAGE_KEY)) patch[PROMPT_RULES_VERSION_STORAGE_KEY] = PROMPT_RULES_VERSION;
   if (!Object.keys(patch).length) return;
-  try { await commit(patch, Object.fromEntries(Object.keys(patch).map((key) => [key, 0]))); }
+  try { await commit(patch); }
   catch { return; }
   for (const [source, target] of sources) if (cache.get(target)?.value === patch[target]) localStorage.removeItem(source);
 }
@@ -73,7 +70,7 @@ export function getSetting<T>(key: string, fallback: T): T { return cache.has(ke
 export function setSettings(patch: Record<string, unknown>): Promise<void> {
   const operation = queue.then(async () => {
     await hydrateSettings();
-    try { await commit(patch, Object.fromEntries(Object.keys(patch).map((key) => [key, cache.get(key)?.revision ?? 0]))); }
+    try { await commit(patch); }
     catch (error) { notify(error instanceof Error ? error.message : "Settings save failed"); throw error; }
   });
   queue = operation.catch(() => undefined);

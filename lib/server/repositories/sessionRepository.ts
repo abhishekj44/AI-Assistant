@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../db/connection";
-import { DEFAULT_KNOWLEDGE_BASE_ID, LOCAL_PROFILE_ID } from "../db/migrations";
+import { DEFAULT_KNOWLEDGE_BASE_ID } from "../db/migrations";
 import { KnowledgeBaseRepository } from "./knowledgeBaseRepository";
 import { indexContent } from "../retrieval/indexing";
 import { EMPTY_MEETING_MEMORY } from "../../conversationTypes";
@@ -25,7 +25,7 @@ export interface PersistedSession extends SessionSnapshot {
   memoryThroughSequence: number;
   summaryThroughSequence: number;
   summaryStatus: string;
-  revision: number;
+  summaryError?: string;
 }
 
 export interface StartSessionInput {
@@ -39,19 +39,11 @@ export interface StartSessionInput {
 interface SessionRow {
   id: string; mode: keyof typeof callTypes; variant: SessionInfo["modeVariant"];
   company: string; details: string; status: string; started_at: string; ended_at: string | null;
-  job_description: string; candidate_profile: string;
-  summary_text: string; summary_status: string; summary_through_sequence: number;
+  job_title: string; job_description: string; seniority: string; candidate_profile: string;
+  summary_text: string; summary_status: string; summary_through_sequence: number; summary_error: string | null;
   memory_json: string; memory_through_sequence: number; next_sequence: number;
   accept_late_until: number | null;
-  owner_tab_id: string | null; lease_expires_at: number | null; revision: number;
-}
-
-export interface SessionJob {
-  id: string;
-  session_id: string;
-  attempts: number;
-  locked_until: number;
-  parameters_json: string;
+  owner_tab_id: string | null; lease_expires_at: number | null;
 }
 
 const callTypes = { INTERVIEWER: "taking_interview", INTERVIEWEE: "giving_interview", MEETING: "meeting" } as const;
@@ -89,15 +81,17 @@ export class SessionRepository {
     if (row.next_sequence && mode !== row.mode) throw new SessionPersistenceError("Session mode is locked after the first turn");
     if (row.status !== "ACTIVE") return;
     this.writeSelections(row.id, info, mode);
-    this.database.prepare("UPDATE sessions SET mode=?, variant=?, company=?, details=?, job_description=?, candidate_profile=?, revision=revision+1 WHERE id=?")
+    this.database.prepare("UPDATE sessions SET mode=?, variant=?, company=?, details=?, job_title=?, job_description=?, seniority=?, candidate_profile=? WHERE id=?")
       .run(mode, info.modeVariant ?? "standard", info.company, info.details,
+        mode === "INTERVIEWEE" ? this.contextText(info.jobTitle, row.job_title, 200, "Job title") : "",
         mode === "INTERVIEWEE" ? this.contextText(info.jobDescription, row.job_description) : "",
+        mode === "INTERVIEWEE" ? this.contextText(info.seniority, row.seniority, 100, "Seniority") : "",
         mode === "INTERVIEWER" ? this.contextText(info.candidateProfile, row.candidate_profile) : "", row.id);
   }
 
-  private contextText(value: unknown, previous = ""): string {
+  private contextText(value: unknown, previous = "", maxLength = 12_000, label = "Interview context"): string {
     if (value === undefined) return previous;
-    if (typeof value !== "string" || value.length > 12_000) throw new SessionPersistenceError("Interview context must be text of at most 12000 characters", 400);
+    if (typeof value !== "string" || value.length > maxLength) throw new SessionPersistenceError(`${label} must be text of at most ${maxLength} characters`, 400);
     return value.trim();
   }
 
@@ -107,9 +101,8 @@ export class SessionRepository {
     if (selections === undefined) return;
     const bases = new KnowledgeBaseRepository(this.database).validateSelections(selections, mode);
     this.database.prepare("DELETE FROM session_knowledge_bases WHERE session_id=?").run(id);
-    const insert = this.database.prepare("INSERT INTO session_knowledge_bases(session_id,knowledge_base_id,usage_role) VALUES (?,?,?)");
-    const roles = { PERSONAL: "PERSONAL_FACTS", JOB: "JOB_CONTEXT", REFERENCE: "REFERENCE" } as const;
-    for (const base of bases) insert.run(id, base.id, roles[base.kind]);
+    const insert = this.database.prepare("INSERT INTO session_knowledge_bases(session_id,knowledge_base_id) VALUES (?,?)");
+    for (const base of bases) insert.run(id, base.id);
   }
 
   start(input: StartSessionInput): PersistedSession {
@@ -124,12 +117,14 @@ export class SessionRepository {
           this.database.prepare("UPDATE sessions SET owner_tab_id=? WHERE id=?").run(input.ownerTabId, input.id);
         }
         this.writeInfo(existing, input.sessionInfo);
-        if (existing.status === "ACTIVE") this.database.prepare("UPDATE sessions SET lease_expires_at=?, revision=revision+1 WHERE id=?").run(Date.now() + LEASE_MS, input.id);
+        if (existing.status === "ACTIVE") this.database.prepare("UPDATE sessions SET lease_expires_at=? WHERE id=?").run(Date.now() + LEASE_MS, input.id);
         return;
       }
-      this.database.prepare(`INSERT INTO sessions(id,local_profile_id,mode,variant,company,details,job_description,candidate_profile,started_at,owner_tab_id,lease_expires_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(input.id, LOCAL_PROFILE_ID, mode, input.sessionInfo?.modeVariant ?? "standard", input.sessionInfo?.company ?? "", input.sessionInfo?.details ?? "",
+      this.database.prepare(`INSERT INTO sessions(id,mode,variant,company,details,job_title,job_description,seniority,candidate_profile,started_at,owner_tab_id,lease_expires_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(input.id, mode, input.sessionInfo?.modeVariant ?? "standard", input.sessionInfo?.company ?? "", input.sessionInfo?.details ?? "",
+          mode === "INTERVIEWEE" ? this.contextText(input.sessionInfo?.jobTitle, "", 200, "Job title") : "",
           mode === "INTERVIEWEE" ? this.contextText(input.sessionInfo?.jobDescription) : "",
+          mode === "INTERVIEWEE" ? this.contextText(input.sessionInfo?.seniority, "", 100, "Seniority") : "",
           mode === "INTERVIEWER" ? this.contextText(input.sessionInfo?.candidateProfile) : "",
           input.startedAt ?? new Date().toISOString(), input.ownerTabId, Date.now() + LEASE_MS);
       this.writeSelections(input.id, input.sessionInfo, mode);
@@ -151,8 +146,7 @@ export class SessionRepository {
       insert.run(turnId, row.id, turn.id, ++sequence, turn.speaker === "me" ? "LOCAL" : "REMOTE", turn.text.trim(), turn.timestamp, new Date().toISOString(), turn.audioStart ?? null, turn.audioEnd ?? null, turn.confidence ?? null, JSON.stringify({ sequenceId: turn.sequenceId }));
       indexContent(this.database, "transcript_turn_id", turnId, `Turn ${sequence}`, turn.text.trim());
     }
-    this.database.prepare("UPDATE sessions SET next_sequence=?, revision=revision+1 WHERE id=?").run(sequence, row.id);
-    if (sequence !== row.next_sequence && row.status === "ENDED") this.enqueueSummary(row.id, sequence);
+    this.database.prepare("UPDATE sessions SET next_sequence=? WHERE id=?").run(sequence, row.id);
   }
 
   appendTurns(id: string, turns: TranscriptTurn[], ownerTabId: string) {
@@ -174,8 +168,7 @@ export class SessionRepository {
       const row = this.row(id);
       this.owner(row, ownerTabId);
       this.insertTurns(row, turns);
-      this.database.prepare("UPDATE sessions SET status='ENDED', ended_at=COALESCE(ended_at,?), accept_late_until=COALESCE(accept_late_until,?), lease_expires_at=NULL, revision=revision+1 WHERE id=?").run(endedAt, Date.now() + 120_000, id);
-      this.enqueueSummary(id, this.row(id).next_sequence);
+      this.database.prepare("UPDATE sessions SET status='ENDED', ended_at=COALESCE(ended_at,?), accept_late_until=COALESCE(accept_late_until,?), lease_expires_at=NULL WHERE id=?").run(endedAt, Date.now() + 120_000, id);
     })();
     return this.get(id)!;
   }
@@ -193,17 +186,14 @@ export class SessionRepository {
     return this.database.transaction(() => {
       const existing = this.get(snapshot.id, false);
       if (existing?.ownerTabId) throw new SessionPersistenceError("Import cannot modify a live-owned session");
-      if (!existing) this.database.prepare(`INSERT INTO sessions(id,local_profile_id,mode,variant,company,details,started_at,memory_json)
-        VALUES (?,?,?,?,?,?,?,?)`).run(snapshot.id, LOCAL_PROFILE_ID, this.mode(snapshot.sessionInfo), snapshot.sessionInfo?.modeVariant ?? "standard", snapshot.sessionInfo?.company ?? "", snapshot.sessionInfo?.details ?? "", snapshot.startedAt, JSON.stringify(snapshot.memory));
+      if (!existing) this.database.prepare(`INSERT INTO sessions(id,mode,variant,company,details,started_at,memory_json)
+        VALUES (?,?,?,?,?,?,?)`).run(snapshot.id, this.mode(snapshot.sessionInfo), snapshot.sessionInfo?.modeVariant ?? "standard", snapshot.sessionInfo?.company ?? "", snapshot.sessionInfo?.details ?? "", snapshot.startedAt, JSON.stringify(snapshot.memory));
       const row = this.row(snapshot.id);
       this.writeInfo(row, snapshot.sessionInfo);
       this.insertTurns(row, snapshot.transcripts);
       this.database.prepare("UPDATE sessions SET memory_json=?,memory_through_sequence=next_sequence WHERE id=? AND memory_through_sequence=0").run(JSON.stringify(snapshot.memory), snapshot.id);
       if (snapshot.summary) this.updateSummary(snapshot.id, snapshot.summary, this.row(snapshot.id).next_sequence);
-      if (snapshot.endedAt) {
-        this.database.prepare("UPDATE sessions SET status='ENDED',ended_at=COALESCE(ended_at,?) WHERE id=?").run(snapshot.endedAt, snapshot.id);
-        if (!snapshot.summary) this.enqueueSummary(snapshot.id, this.row(snapshot.id).next_sequence);
-      }
+      if (snapshot.endedAt) this.database.prepare("UPDATE sessions SET status='ENDED',ended_at=COALESCE(ended_at,?) WHERE id=?").run(snapshot.endedAt, snapshot.id);
       return this.get(snapshot.id)!;
     })();
   }
@@ -219,11 +209,12 @@ export class SessionRepository {
     return { id: row.id, startedAt: row.started_at, endedAt: row.ended_at ?? undefined, transcripts,
       memory: { ...EMPTY_MEETING_MEMORY, ...JSON.parse(row.memory_json) }, summary: row.summary_text || undefined,
       sessionInfo: { company: row.company, details: row.details, callType: callTypes[row.mode], modeVariant: row.variant,
-        jobDescription: row.job_description || undefined, candidateProfile: row.candidate_profile || undefined,
+        jobTitle: row.job_title || undefined, jobDescription: row.job_description || undefined, seniority: row.seniority || undefined,
+        candidateProfile: row.candidate_profile || undefined,
         knowledgeBaseIds: row.mode === "INTERVIEWER" ? [] : selectedBases.length ? selectedBases.map(base => base.knowledge_base_id) : undefined },
       status: row.status, ownerTabId: row.owner_tab_id ?? undefined, leaseExpiresAt: row.lease_expires_at ?? undefined,
       throughSequence: row.next_sequence, memoryThroughSequence: row.memory_through_sequence, summaryThroughSequence: row.summary_through_sequence,
-      summaryStatus: row.summary_status, revision: row.revision };
+      summaryStatus: row.summary_status, summaryError: row.summary_error ?? undefined };
   }
 
   list(options: { limit?: number; cursor?: string; includeTranscripts?: boolean } = {}) {
@@ -243,7 +234,7 @@ export class SessionRepository {
     const row = this.row(id);
     this.owner(row, ownerTabId);
     this.coverage(coveredThroughSequence, row.next_sequence);
-    this.database.prepare("UPDATE sessions SET memory_json=?,memory_through_sequence=?,revision=revision+1 WHERE id=? AND memory_through_sequence<? AND status='ACTIVE'")
+    this.database.prepare("UPDATE sessions SET memory_json=?,memory_through_sequence=? WHERE id=? AND memory_through_sequence<? AND status='ACTIVE'")
       .run(JSON.stringify(memory), coveredThroughSequence, id, coveredThroughSequence);
     return this.get(id)!;
   }
@@ -254,51 +245,35 @@ export class SessionRepository {
 
   updateSummary(id: string, summary: string, coveredThroughSequence: number) {
     this.coverage(coveredThroughSequence, this.row(id).next_sequence);
-    const result = this.database.prepare("UPDATE sessions SET summary_text=?,summary_through_sequence=?,summary_status=CASE WHEN next_sequence=? THEN 'READY' ELSE summary_status END,summary_error=NULL,revision=revision+1 WHERE id=? AND summary_through_sequence<=?")
+    const result = this.database.prepare("UPDATE sessions SET summary_text=?,summary_through_sequence=?,summary_status=CASE WHEN next_sequence=? THEN 'READY' ELSE summary_status END,summary_error=NULL WHERE id=? AND summary_through_sequence<=?")
       .run(summary, coveredThroughSequence, coveredThroughSequence, id, coveredThroughSequence);
     if (result.changes) indexContent(this.database, "summary_session_id", id, "Session summary", summary);
   }
 
-  private enqueueSummary(id: string, sequence: number) {
-    if (!sequence) return;
-    const now = new Date().toISOString();
-    const result = this.database.prepare("INSERT OR IGNORE INTO background_jobs(id,kind,session_id,dedupe_key,parameters_json,created_at,updated_at) VALUES (?,'SUMMARY',?,?,?,?,?)")
-      .run(randomUUID(), id, `summary:${id}:${sequence}`, JSON.stringify({ coveredThroughSequence: sequence }), now, now);
-    if (result.changes) this.database.prepare("UPDATE sessions SET summary_status='PENDING',summary_error=NULL WHERE id=?").run(id);
-  }
-
-  claimJob(): SessionJob | null {
+  // Returns how many turns the summary will cover, or null when no summary should start.
+  claimSummary(id: string, manual = false): number | null {
     return this.database.transaction(() => {
-      const now = Date.now();
-      const job = this.database.prepare("SELECT * FROM background_jobs WHERE kind='SUMMARY' AND ((status='PENDING' AND run_after<=?) OR (status='RUNNING' AND locked_until<=?)) ORDER BY created_at LIMIT 1").get(now, now) as SessionJob | undefined;
-      if (!job) return null;
-      const lockedUntil = now + 90_000;
-      this.database.prepare("UPDATE background_jobs SET status='RUNNING',attempts=attempts+1,locked_until=?,updated_at=? WHERE id=?").run(lockedUntil, new Date().toISOString(), job.id);
-      return { ...job, attempts: job.attempts + 1, locked_until: lockedUntil };
+      const claimed = this.database.prepare(`UPDATE sessions SET summary_status='PENDING',summary_error=NULL
+        WHERE id=? AND status='ENDED' AND next_sequence>0 AND summary_status!='PENDING' AND (?=1 OR summary_status='NONE')`).run(id, manual ? 1 : 0);
+      return claimed.changes ? this.row(id).next_sequence : null;
     })();
   }
 
-  completeJob(job: SessionJob, summary: string) {
-    this.database.transaction(() => {
-      if (!this.jobOwned(job)) return;
-      this.updateSummary(job.session_id, summary, JSON.parse(job.parameters_json).coveredThroughSequence);
-      this.database.prepare("UPDATE background_jobs SET status='SUCCEEDED',locked_until=NULL,error=NULL,updated_at=? WHERE id=?").run(new Date().toISOString(), job.id);
+  completeSummary(id: string, summary: string, coveredThroughSequence: number): boolean {
+    return this.database.transaction(() => {
+      const result = this.database.prepare("UPDATE sessions SET summary_text=?,summary_through_sequence=?,summary_status='READY',summary_error=NULL WHERE id=? AND summary_status='PENDING'")
+        .run(summary, coveredThroughSequence, id);
+      if (result.changes) indexContent(this.database, "summary_session_id", id, "Session summary", summary);
+      return result.changes > 0;
     })();
   }
 
-  private jobOwned(job: SessionJob) {
-    return this.database.prepare("SELECT 1 FROM background_jobs WHERE id=? AND status='RUNNING' AND attempts=? AND locked_until=?").get(job.id, job.attempts, job.locked_until);
+  failSummary(id: string, error: string): void {
+    this.database.prepare("UPDATE sessions SET summary_status='FAILED',summary_error=? WHERE id=? AND summary_status='PENDING'").run(error.slice(0, 2000), id);
   }
 
-  failJob(job: SessionJob, error: string) {
-    this.database.transaction(() => {
-      if (!this.jobOwned(job)) return;
-      const failed = job.attempts >= 5;
-      this.database.prepare("UPDATE background_jobs SET status=?,run_after=?,locked_until=NULL,error=?,updated_at=? WHERE id=?")
-        .run(failed ? "FAILED" : "PENDING", Date.now() + Math.min(300_000, 1000 * 2 ** job.attempts), error.slice(0, 2000), new Date().toISOString(), job.id);
-      this.database.prepare("UPDATE sessions SET summary_status=?,summary_error=? WHERE id=? AND next_sequence=? AND summary_through_sequence<=?")
-        .run(failed ? "FAILED" : "PENDING", error.slice(0, 2000), job.session_id, JSON.parse(job.parameters_json).coveredThroughSequence, JSON.parse(job.parameters_json).coveredThroughSequence);
-    })();
+  recoverInterruptedSummaries(): number {
+    return this.database.prepare("UPDATE sessions SET summary_status='FAILED',summary_error='The app stopped before this summary finished. Retry it.' WHERE summary_status='PENDING'").run().changes;
   }
 }
 

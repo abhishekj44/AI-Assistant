@@ -38,11 +38,10 @@ test("review and base filtering happen before limit and history is opt-in", (con
   assert.equal(retrieval.retrieve("SQLite", { limit: 1 })[0].provenance.qaId, "approved");
   database.prepare("UPDATE knowledge_entries SET review_state = 'REJECTED' WHERE enabled = 1").run();
   assert.deepEqual(retrieval.retrieve("SQLite"), []);
-  database.prepare("INSERT INTO profiles(id, kind, display_name, created_at, updated_at) VALUES ('other', 'CONTACT', 'Other', '2020', '2020')").run();
-  database.prepare("INSERT INTO knowledge_bases(id, profile_id, kind, name, created_at, updated_at) VALUES ('other-base', 'other', 'PERSONAL', 'Other', '2020', '2020')").run();
-  new KnowledgeRepository(database).replacePack({ ...structuredClone(EMPTY_KNOWLEDGE_PACK), facts: ["Other person SQLite"] }, "other-base");
-  assert.deepEqual(retrieval.retrieve("SQLite", { baseIds: ["other-base"] }), []);
-  database.prepare("INSERT INTO sessions(id, local_profile_id, mode, started_at) VALUES ('s', 'local-user', 'INTERVIEWEE', '2020')").run();
+  database.prepare("INSERT INTO knowledge_bases(id, kind, name, status, created_at, updated_at) VALUES ('archived-base', 'PERSONAL', 'Archived', 'ARCHIVED', '2020', '2020')").run();
+  new KnowledgeRepository(database).replacePack({ ...structuredClone(EMPTY_KNOWLEDGE_PACK), facts: ["Archived SQLite"] }, "archived-base");
+  assert.deepEqual(retrieval.retrieve("SQLite", { baseIds: ["archived-base"] }), []);
+  database.prepare("INSERT INTO sessions(id, mode, started_at) VALUES ('s', 'INTERVIEWEE', '2020')").run();
   database.prepare("INSERT INTO questions(id, session_id, primary_ask, created_at) VALUES ('q', 's', 'SQLite?', '2020')").run();
   database.prepare("INSERT INTO retrieval_items(question_id, title, body, content_hash) VALUES ('q', 'SQLite history', 'SQLite history', 'hash')").run();
   assert.deepEqual(retrieval.retrieve("SQLite", { sourceKinds: ["QUESTION"] }), []);
@@ -69,12 +68,12 @@ test("context service retains personal fallback, follow-ups, aliases and revisio
   assert.deepEqual((await retrieve("cpp", "", { baseIds: [] })).bank.entries, []);
 });
 
-test("session-linked bases replace default scope and other profiles stay excluded", async (context) => {
+test("session-linked bases replace default scope and unknown sessions retrieve nothing", async (context) => {
   const database = openDatabase(":memory:");
   context.after(() => database.close());
-  database.prepare("INSERT INTO knowledge_bases(id, profile_id, kind, name, created_at, updated_at) VALUES ('linked', 'local-user', 'PERSONAL', 'Linked', '2020', '2020')").run();
-  database.prepare("INSERT INTO sessions(id, local_profile_id, mode, started_at) VALUES ('session', 'local-user', 'MEETING', '2020')").run();
-  database.prepare("INSERT INTO session_knowledge_bases(session_id, knowledge_base_id, usage_role) VALUES ('session', 'linked', 'PERSONAL_FACTS')").run();
+  database.prepare("INSERT INTO knowledge_bases(id, kind, name, created_at, updated_at) VALUES ('linked', 'PERSONAL', 'Linked', '2020', '2020')").run();
+  database.prepare("INSERT INTO sessions(id, mode, started_at) VALUES ('session', 'MEETING', '2020')").run();
+  database.prepare("INSERT INTO session_knowledge_bases(session_id, knowledge_base_id) VALUES ('session', 'linked')").run();
   const knowledge = new KnowledgeRepository(database);
   knowledge.replacePack({ ...structuredClone(EMPTY_KNOWLEDGE_PACK), facts: ["Default baseline"] });
   knowledge.replacePack({ ...structuredClone(EMPTY_KNOWLEDGE_PACK), facts: ["Linked baseline"] }, "linked");

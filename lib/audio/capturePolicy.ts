@@ -9,16 +9,18 @@ export function sessionSetupError(info: SessionInfo, basesReady = true): string 
   if (info.callType === "giving_interview" && !info.jobDescription?.trim()) return "Job description is required.";
   if (info.callType === "taking_interview" && !info.candidateProfile?.trim()) return "Candidate profile is required.";
   if ((info.jobDescription?.length ?? 0) > 12000 || (info.candidateProfile?.length ?? 0) > 12000) return "Interview context must be at most 12,000 characters.";
+  if (info.callType === "giving_interview" && (info.jobTitle?.length ?? 0) > 200) return "Job title must be at most 200 characters.";
+  if (info.callType === "giving_interview" && (info.seniority?.length ?? 0) > 100) return "Seniority must be at most 100 characters.";
   if (info.callType === "meeting" && (!basesReady || !info.knowledgeBaseIds?.length || info.knowledgeBaseIds.length > 20)) return "Select 1 to 20 knowledge bases.";
   return "";
 }
 
 export function prepareSessionInfo(info: SessionInfo): SessionInfo {
-  const { jobDescription, candidateProfile, ...common } = info;
+  const { jobTitle, jobDescription, seniority, candidateProfile, ...common } = info;
   return {
     ...common,
     knowledgeBaseIds: info.callType === "giving_interview" ? ["personal-knowledge"] : info.callType === "taking_interview" ? [] : info.knowledgeBaseIds,
-    ...(info.callType === "giving_interview" ? { jobDescription: jobDescription?.trim() ?? "" } : {}),
+    ...(info.callType === "giving_interview" ? { jobTitle: jobTitle?.trim() ?? "", jobDescription: jobDescription?.trim() ?? "", seniority: seniority?.trim() ?? "" } : {}),
     ...(info.callType === "taking_interview" ? { candidateProfile: candidateProfile?.trim() ?? "" } : {}),
   };
 }

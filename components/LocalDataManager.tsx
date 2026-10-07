@@ -19,8 +19,21 @@ interface StoredSession {
   sessionInfo?: SessionInfo;
   summary?: string;
   summaryStatus: string;
+  summaryError?: string;
+  summaryThroughSequence: number;
   transcripts: TranscriptTurn[];
   throughSequence: number;
+}
+
+function summaryLabel(session: StoredSession) {
+  return session.summaryStatus === "READY" && session.summaryThroughSequence < session.throughSequence ? "ready (newer turns not included)" : session.summaryStatus.toLowerCase();
+}
+
+function summaryAction(session: StoredSession) {
+  if (session.status !== "ENDED" || !session.throughSequence || session.summaryStatus === "PENDING") return "";
+  if (session.summaryStatus === "FAILED") return "Retry summary";
+  if (session.summaryStatus === "NONE") return "Generate summary";
+  return session.summaryThroughSequence < session.throughSequence ? "Update summary" : "";
 }
 
 async function jsonRequest(url: string, options?: RequestInit) {
@@ -51,11 +64,31 @@ export function LocalDataManager() {
       setDatabase(status);
       setSessions(history.sessions);
       setNextCursor(history.nextCursor);
+      setSelected(current => {
+        const fresh = history.sessions.find((item: StoredSession) => item.id === current?.id);
+        return current && fresh ? { ...current, summary: fresh.summary, summaryStatus: fresh.summaryStatus, summaryError: fresh.summaryError, summaryThroughSequence: fresh.summaryThroughSequence } : current;
+      });
     }).catch(reason => {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Unable to restore local data");
     });
     return () => controller.abort();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!sessions.some(session => session.summaryStatus === "PENDING")) return;
+    const timer = setTimeout(() => setRefresh(value => value + 1), 4000);
+    return () => clearTimeout(timer);
+  }, [sessions]);
+
+  const summarize = async (id: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      await jsonRequest("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "summarize", id }) });
+      setRefresh(value => value + 1);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to start the summary"); }
+    finally { setBusy(false); }
+  };
 
   const maintenance = async (action: "backup" | "rebuild") => {
     setBusy(true);
@@ -107,7 +140,7 @@ export function LocalDataManager() {
       <div className="mt-2 overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead className="border-b border-slate-800 text-slate-500"><tr><th className="py-2 pr-3 font-medium">Started</th><th className="pr-3 font-medium">Company</th><th className="pr-3 font-medium">Mode</th><th className="pr-3 font-medium">Turns</th><th className="font-medium">Summary</th><th /></tr></thead>
-          <tbody>{sessions.map(session => <tr key={session.id} className="border-b border-slate-800/50"><td className="whitespace-nowrap py-2 pr-3 text-slate-400">{new Date(session.startedAt).toLocaleString()}</td><td className="pr-3">{session.sessionInfo?.company || "-"}</td><td className="pr-3">{callTypeLabel(session.sessionInfo?.callType)}</td><td className="pr-3">{session.throughSequence}</td><td className="text-slate-500">{session.summaryStatus.toLowerCase()}</td><td className="text-right"><Button size="sm" variant="ghost" disabled={busy} onClick={() => void openSession(session.id)} title="Open session transcript" aria-label="Open session transcript"><FileText className="h-3.5 w-3.5" /></Button></td></tr>)}</tbody>
+          <tbody>{sessions.map(session => <tr key={session.id} className="border-b border-slate-800/50"><td className="whitespace-nowrap py-2 pr-3 text-slate-400">{new Date(session.startedAt).toLocaleString()}</td><td className="pr-3">{session.sessionInfo?.company || "-"}</td><td className="pr-3">{callTypeLabel(session.sessionInfo?.callType)}</td><td className="pr-3">{session.throughSequence}</td><td className={session.summaryStatus === "FAILED" ? "text-rose-400" : "text-slate-500"} title={session.summaryError}>{summaryLabel(session)}</td><td className="whitespace-nowrap text-right">{summaryAction(session) && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void summarize(session.id)}><RotateCcw className="mr-1 h-3.5 w-3.5" />{summaryAction(session)}</Button>}<Button size="sm" variant="ghost" disabled={busy} onClick={() => void openSession(session.id)} title="Open session transcript" aria-label="Open session transcript"><FileText className="h-3.5 w-3.5" /></Button></td></tr>)}</tbody>
         </table>
       </div>
       {!sessions.length && <p className="mt-3 text-xs text-slate-500">No saved sessions.</p>}
@@ -115,6 +148,8 @@ export function LocalDataManager() {
       {selected && <div className="mt-4 border-t border-slate-800 pt-3">
         <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">{selected.sessionInfo?.company || "Session"}</h3><Button size="sm" variant="ghost" onClick={() => setSelected(null)}>Close Transcript</Button></div>
         {selected.summary && <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-slate-300">{selected.summary}</p>}
+        {selected.summaryStatus === "PENDING" && <p className="mt-3 text-xs text-slate-400">Summary is being generated...</p>}
+        {selected.summaryStatus === "FAILED" && <p role="alert" className="mt-3 text-xs text-rose-400">Summary failed: {selected.summaryError || "unknown error"}</p>}
         <ol className="mt-4 max-h-80 space-y-3 overflow-y-auto pr-2">{selected.transcripts.map(turn => <li key={turn.id} className="border-l border-slate-700 pl-3"><span className="text-[10px] text-slate-500">{turn.speaker === "me" ? "Me" : selected.sessionInfo?.callType === "taking_interview" ? "Candidate" : "Remote"} · {new Date(turn.timestamp).toLocaleTimeString()}</span><p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{turn.text}</p></li>)}</ol>
       </div>}
     </section>

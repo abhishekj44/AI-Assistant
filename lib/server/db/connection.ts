@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { migrateDatabase } from "./migrations";
 import { migrateLegacyData } from "./legacyMigration";
 import { ModelRunRepository } from "../repositories/modelRunRepository";
+import { SessionRepository } from "../repositories/sessionRepository";
 
 type DatabaseGlobals = typeof globalThis & {
   copilotDatabases?: Map<string, Database.Database>;
@@ -33,6 +34,7 @@ export function getDatabase(): Database.Database {
   const database = openDatabase(filename);
   migrateLegacyData(database, process.env.COPILOT_LEGACY_ROOT || process.cwd());
   new ModelRunRepository(database).recoverInterruptedRuns();
+  new SessionRepository(database).recoverInterruptedSummaries();
   connections.set(filename, database);
   return database;
 }

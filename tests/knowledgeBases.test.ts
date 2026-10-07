@@ -15,7 +15,7 @@ import * as qaApi from "../app/api/qa-bank/route";
 import * as sessionApi from "../app/api/sessions/route";
 import { EMPTY_KNOWLEDGE_PACK } from "../lib/knowledge/types";
 
-test("local and shared base CRUD rejects foreign profiles and linked deletion", context => {
+test("base CRUD hides archived bases and rejects linked deletion", context => {
   const database = openDatabase(":memory:");
   context.after(() => database.close());
   const repository = new KnowledgeBaseRepository(database);
@@ -28,12 +28,11 @@ test("local and shared base CRUD rejects foreign profiles and linked deletion", 
   assert.throws(() => repository.validateSelections([], "MEETING"), /Select/);
   assert.deepEqual(repository.validateSelections([], "INTERVIEWER"), []);
   assert.throws(() => repository.require("bad"), /Invalid/);
-  database.prepare("INSERT INTO profiles(id,kind,display_name,created_at,updated_at) VALUES ('other','CONTACT','Other','now','now')").run();
-  database.prepare("UPDATE knowledge_bases SET profile_id='other' WHERE id=?").run(personal.id);
+  database.prepare("UPDATE knowledge_bases SET status='ARCHIVED' WHERE id=?").run(personal.id);
   assert.throws(() => repository.require(personal.id), /unavailable/);
   assert.ok(!repository.list().some(base => base.id === personal.id));
-  database.prepare("INSERT INTO sessions(id,local_profile_id,mode,started_at) VALUES ('session','local-user','MEETING','now')").run();
-  database.prepare("INSERT INTO session_knowledge_bases VALUES ('session',?,'JOB_CONTEXT')").run(job.id);
+  database.prepare("INSERT INTO sessions(id,mode,started_at) VALUES ('session','MEETING','now')").run();
+  database.prepare("INSERT INTO session_knowledge_bases(session_id,knowledge_base_id) VALUES ('session',?)").run(job.id);
   assert.throws(() => repository.delete(job.id), /linked/);
   assert.throws(() => repository.delete("personal-knowledge"), /default/);
   repository.delete(reference.id);
@@ -50,7 +49,6 @@ test("session selection updates are atomic, survive reload and preserve absent s
   const info = { company: "", details: "", callType: "meeting" as const, knowledgeBaseIds: ["personal-knowledge", job.id, reference.id] };
   sessions.start({ id: "session", ownerTabId: "tab", sessionInfo: info });
   assert.deepEqual(sessions.get("session")?.sessionInfo?.knowledgeBaseIds, [...info.knowledgeBaseIds].sort());
-  assert.deepEqual((database.prepare("SELECT usage_role FROM session_knowledge_bases WHERE session_id='session' ORDER BY usage_role").all() as Array<{ usage_role: string }>).map(row => row.usage_role), ["JOB_CONTEXT", "PERSONAL_FACTS", "REFERENCE"]);
   sessions.start({ id: "session", ownerTabId: "tab", sessionInfo: { company: "Changed", details: "", callType: "meeting" } });
   assert.equal(sessions.get("session")?.sessionInfo?.knowledgeBaseIds?.length, 3);
   assert.throws(() => sessions.start({ id: "session", ownerTabId: "tab", sessionInfo: { ...info, company: "Wrong", knowledgeBaseIds: [job.id, "bad"] } }), /Invalid/);
@@ -135,16 +133,15 @@ test("knowledge scope HTTP APIs isolate editing, caches and downloads with safe 
   assert.equal((await knowledgeApi.DELETE(request("knowledge", "DELETE"))).status, 200);
   assert.deepEqual(sessions.get("active")?.sessionInfo?.knowledgeBaseIds, [base.id]);
   assert.equal((await baseApi.DELETE(request(`knowledge-bases?baseId=${base.id}`, "DELETE"))).status, 409);
-  const foreign = new KnowledgeBaseRepository(database).create({ name: "Foreign", kind: "PERSONAL" });
-  database.prepare("INSERT INTO profiles(id,kind,display_name,created_at,updated_at) VALUES ('other','CONTACT','Other','now','now')").run();
-  database.prepare("UPDATE knowledge_bases SET profile_id='other' WHERE id=?").run(foreign.id);
-  assert.equal((await knowledgeApi.GET(request(`knowledge?baseId=${foreign.id}`))).status, 404);
-  assert.equal((await qaApi.POST(request("qa-bank", "POST", { baseId: foreign.id, entry: {} }))).status, 404);
-  assert.equal((await knowledgeApi.PUT(request("knowledge", "PUT", { baseId: foreign.id, pack }))).status, 404);
-  assert.equal((await sessionApi.POST(request("sessions", "POST", { action: "start", id: "blocked", ownerTabId: "tab", sessionInfo: { company: "", details: "", callType: "meeting", knowledgeBaseIds: [foreign.id] } }))).status, 404);
+  const archived = new KnowledgeBaseRepository(database).create({ name: "Archived", kind: "PERSONAL" });
+  database.prepare("UPDATE knowledge_bases SET status='ARCHIVED' WHERE id=?").run(archived.id);
+  assert.equal((await knowledgeApi.GET(request(`knowledge?baseId=${archived.id}`))).status, 404);
+  assert.equal((await qaApi.POST(request("qa-bank", "POST", { baseId: archived.id, entry: {} }))).status, 404);
+  assert.equal((await knowledgeApi.PUT(request("knowledge", "PUT", { baseId: archived.id, pack }))).status, 404);
+  assert.equal((await sessionApi.POST(request("sessions", "POST", { action: "start", id: "blocked", ownerTabId: "tab", sessionInfo: { company: "", details: "", callType: "meeting", knowledgeBaseIds: [archived.id] } }))).status, 404);
   assert.equal((await sessionApi.POST(request("sessions", "POST", { action: "start", id: "invalid", ownerTabId: "tab", sessionInfo: { company: "", details: "", callType: "meeting", knowledgeBaseIds: Array(21).fill("personal-knowledge") } }))).status, 400);
   const form = new FormData();
-  form.append("baseId", foreign.id);
+  form.append("baseId", archived.id);
   form.append("file", new File(["No extraction"], "source.txt"));
   assert.equal((await knowledgeApi.POST(new NextRequest("http://localhost/api/knowledge", { method: "POST", body: form }))).status, 404);
   assert.equal((await knowledgeApi.GET(request("knowledge?baseId=invalid"))).status, 400);

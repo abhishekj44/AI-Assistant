@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { sessionRepository, SessionPersistenceError } from "@/lib/server/repositories/sessionRepository";
 import { KnowledgeBaseError, knowledgeBaseRepository } from "@/lib/server/repositories/knowledgeBaseRepository";
-import { processSessionJobs } from "@/lib/server/sessionJobs";
+import { generateSessionSummary } from "@/lib/server/sessionSummary";
 import type { MeetingMemory, SessionInfo, TranscriptTurn } from "@/lib/conversationTypes";
 import { DEFAULT_KNOWLEDGE_BASE_ID } from "@/lib/server/db/migrations";
 
@@ -70,7 +70,10 @@ function errorResponse(error: unknown) {
   console.error("Session persistence failed", error);
   return NextResponse.json({ error: "Session persistence unavailable" }, { status: 500 });
 }
-function resumeJobs() { after(async () => { await processSessionJobs(); }); }
+function startSummary(sessionId: string, manual: boolean) {
+  const covered = sessionRepository.claimSummary(sessionId, manual);
+  if (covered !== null) after(() => generateSessionSummary(sessionId, covered));
+}
 
 export async function GET(req: Request) {
   try {
@@ -87,7 +90,6 @@ export async function GET(req: Request) {
       const last = sessions.at(-1);
       result = { sessions, nextCursor: sessions.length === limit && last ? `${last.startedAt}|${last.id}` : null };
     }
-    resumeJobs();
     return NextResponse.json(result);
   } catch (error) { return errorResponse(error); }
 }
@@ -109,8 +111,15 @@ export async function POST(req: Request) {
     let body: Record<string, unknown>;
     try { body = object(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { invalid("Invalid JSON body"); }
     const sessionId = id(body.id);
-    const ownerTabId = id(body.ownerTabId);
     const action = body.action ?? "snapshot";
+    if (action === "summarize") {
+      const stored = sessionRepository.get(sessionId, false);
+      if (!stored) throw new SessionPersistenceError("Session not found", 404);
+      if (stored.status !== "ENDED" || !stored.throughSequence) throw new SessionPersistenceError("Only ended sessions with a transcript can be summarized");
+      startSummary(sessionId, true);
+      return NextResponse.json({ success: true, session: { ...sessionRepository.get(sessionId, false), transcripts: undefined } });
+    }
+    const ownerTabId = id(body.ownerTabId);
     let session;
     switch (action) {
       case "start":
@@ -126,7 +135,10 @@ export async function POST(req: Request) {
       case "snapshot": session = sessionRepository.saveSnapshot({ id: sessionId, startedAt: date(body.startedAt), endedAt: body.endedAt === undefined ? undefined : date(body.endedAt), sessionInfo: info(body.sessionInfo), transcripts: turns(body.transcripts, 50_000), memory: memory(body.memory) }, ownerTabId); break;
       default: invalid("Unknown session action; owner-free imports must use the storage importer");
     }
-    resumeJobs();
+    if (session.status === "ENDED" && (action === "end" || action === "snapshot")) {
+      startSummary(sessionId, false);
+      session = sessionRepository.get(sessionId, false)!;
+    }
     return NextResponse.json({ success: true, session: { ...session, transcripts: undefined }, committedThroughSequence: session.throughSequence });
   } catch (error) { return errorResponse(error); }
 }

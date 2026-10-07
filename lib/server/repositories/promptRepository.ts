@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../db/connection";
 import { getCallPromptTemplate } from "../../prompts";
@@ -10,11 +9,10 @@ import type { CallType } from "../../callTypes";
 export type PromptPurpose = "ANSWER" | "SUMMARY" | "MEMORY" | "EXTRACTION" | "CHAT";
 export type PromptMode = "INTERVIEWER" | "INTERVIEWEE" | "MEETING";
 export interface PromptRow {
-  id: string; template_key: string; purpose: PromptPurpose; mode: PromptMode | null;
-  variant: "standard" | "course_admission"; version: number; system_template: string;
-  user_template: string; parameters: Record<string, unknown>; active: number; created_at: string;
+  template_key: string; purpose: PromptPurpose; mode: PromptMode | null;
+  variant: "standard" | "course_admission"; system_template: string;
+  user_template: string; parameters: Record<string, unknown>; customized: boolean; updated_at: string;
 }
-export class PromptConflictError extends Error {}
 export const CHAT_SYSTEM_INSTRUCTION = `You are a helpful, versatile AI Assistant and Copilot embedded in an interview preparation and meeting platform.
 
 You have access to the user's Candidate Knowledge (profile, projects, skills, experience) when relevant.
@@ -40,12 +38,12 @@ Tone:
 - Direct, intelligent, and conversational.
 - Use clean markdown formatting (bullet points, bold text, code blocks) when helpful.`;
 
-type StoredPrompt = Omit<PromptRow, "parameters"> & { parameters_json: string };
+type StoredPrompt = Omit<PromptRow, "parameters" | "customized"> & { parameters_json: string; customized: number };
 function decode(row: StoredPrompt): PromptRow {
-  const { parameters_json, ...rest } = row;
-  return { ...rest, parameters: JSON.parse(parameters_json) };
+  const { parameters_json, customized, ...rest } = row;
+  return { ...rest, customized: customized === 1, parameters: JSON.parse(parameters_json) };
 }
-const PLACEHOLDERS: Record<PromptPurpose, string[]> = { ANSWER: ["question", "background", "memory", "sessionContext", "transcript", "candidateContext", "jobDescription", "candidateProfile"], SUMMARY: ["transcript", "jobDescription", "candidateProfile"], MEMORY: ["previousMemory", "recentTurns", "jobDescription", "candidateProfile"], EXTRACTION: ["documentType", "documentText"], CHAT: ["message", "history", "candidateContext"] };
+const PLACEHOLDERS: Record<PromptPurpose, string[]> = { ANSWER: ["question", "background", "memory", "sessionContext", "transcript", "candidateContext", "jobTitle", "company", "jobDescription", "seniority", "additionalContext", "candidateProfile"], SUMMARY: ["transcript", "jobDescription", "candidateProfile"], MEMORY: ["previousMemory", "recentTurns", "jobDescription", "candidateProfile"], EXTRACTION: ["documentType", "documentText"], CHAT: ["message", "history", "candidateContext"] };
 function validateText(value: unknown, required = false, purpose?: PromptPurpose): asserts value is string {
   if (typeof value !== "string" || value.length > 50000 || (required && !value.trim()) || value.includes("\u0000")) throw new Error("Invalid prompt text");
   const allowed = new Set(purpose ? PLACEHOLDERS[purpose] : Object.values(PLACEHOLDERS).flat());
@@ -54,32 +52,50 @@ function validateText(value: unknown, required = false, purpose?: PromptPurpose)
   if (remainder.includes("{{") || remainder.includes("}}") || value.includes("{{{") || value.includes("}}}")) throw new Error("Malformed placeholder");
 }
 
+interface PromptDefault { template_key: string; purpose: PromptPurpose; mode: PromptMode | null; variant: string; system_template: string; user_template: string; parameters: Record<string, unknown> }
+function defaultPrompts(): PromptDefault[] {
+  const defaults: PromptDefault[] = [];
+  const add = (template_key: string, purpose: PromptPurpose, mode: PromptMode | null, variant: string, system_template: string, user_template = "", parameters: Record<string, unknown> = {}) => {
+    defaults.push({ template_key, purpose, mode, variant, system_template, user_template, parameters });
+  };
+  const modes: Array<[PromptMode, CallType]> = [["INTERVIEWER", "taking_interview"], ["INTERVIEWEE", "giving_interview"], ["MEETING", "meeting"]];
+  for (const [mode, callType] of modes) {
+    for (const variant of mode === "INTERVIEWER" ? ["standard", "course_admission"] as const : ["standard"] as const) {
+      const template = getCallPromptTemplate({ callType, modeVariant: variant });
+      add(`ANSWER:${mode}:${variant}`, "ANSWER", mode, variant, template.assistantIdentity, template.finalOutputInstruction, { ...template });
+    }
+    add(`SUMMARY:${mode}:standard`, "SUMMARY", mode, "standard", getSummarizerSystemPrompt(callType), getSummarizerUserPrompt("{{transcript}}", callType));
+    add(`MEMORY:${mode}:standard`, "MEMORY", mode, "standard", getMemorySystemPrompt(callType), buildMemoryUserPrompt("{{previousMemory}}", "{{recentTurns}}").replace('"{{previousMemory}}"', "{{previousMemory}}").replace('"{{recentTurns}}"', "{{recentTurns}}"));
+  }
+  add("EXTRACTION:global:standard", "EXTRACTION", null, "standard", KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT, buildKnowledgeExtractionPrompt("resume", "{{documentText}}").replace("Document type: resume", "Document type: {{documentType}}"));
+  add("CHAT:global:standard", "CHAT", null, "standard", CHAT_SYSTEM_INSTRUCTION, "{{candidateContext}}{{history}}USER: {{message}}\n\nRespond helpfully and concisely as the ASSISTANT.");
+  return defaults;
+}
+
 export class PromptRepository {
+  private seededFor?: Database.Database;
   constructor(private readonly database?: Database.Database) {}
   private get db() { return this.database ?? getDatabase(); }
-  seed(): void {
+  private seed(): void {
     const db = this.db;
+    if (this.seededFor === db) return;
+    const now = new Date().toISOString();
     db.transaction(() => {
-      const insert = db.prepare("INSERT OR IGNORE INTO prompts(id,template_key,purpose,mode,variant,version,system_template,user_template,parameters_json,active,created_at) VALUES (?,?,?,?,?,1,?,?,?,1,?)");
-      const add = (key: string, purpose: PromptPurpose, mode: PromptMode | null, variant: string, system: string, user = "", parameters: unknown = {}) => insert.run(`seed:${key}:1`, key, purpose, mode, variant, system, user, JSON.stringify(parameters), new Date().toISOString());
-      const modes: Array<[PromptMode, CallType]> = [["INTERVIEWER", "taking_interview"], ["INTERVIEWEE", "giving_interview"], ["MEETING", "meeting"]];
-      for (const [mode, callType] of modes) {
-        for (const variant of mode === "INTERVIEWER" ? ["standard", "course_admission"] as const : ["standard"] as const) {
-          const template = getCallPromptTemplate({ callType, modeVariant: variant });
-          add(`ANSWER:${mode}:${variant}`, "ANSWER", mode, variant, template.assistantIdentity, template.finalOutputInstruction, template);
-        }
-        add(`SUMMARY:${mode}:standard`, "SUMMARY", mode, "standard", getSummarizerSystemPrompt(callType), getSummarizerUserPrompt("{{transcript}}", callType));
-        add(`MEMORY:${mode}:standard`, "MEMORY", mode, "standard", getMemorySystemPrompt(callType), buildMemoryUserPrompt("{{previousMemory}}", "{{recentTurns}}").replace('"{{previousMemory}}"', "{{previousMemory}}").replace('"{{recentTurns}}"', "{{recentTurns}}"));
+      const insert = db.prepare("INSERT OR IGNORE INTO prompts(template_key,purpose,mode,variant,system_template,user_template,parameters_json,customized,updated_at) VALUES (?,?,?,?,?,?,?,0,?)");
+      const refresh = db.prepare("UPDATE prompts SET system_template=?,user_template=?,parameters_json=?,updated_at=? WHERE template_key=? AND customized=0 AND (system_template!=? OR user_template!=? OR parameters_json!=?)");
+      for (const item of defaultPrompts()) {
+        const parameters = JSON.stringify(item.parameters);
+        insert.run(item.template_key, item.purpose, item.mode, item.variant, item.system_template, item.user_template, parameters, now);
+        refresh.run(item.system_template, item.user_template, parameters, now, item.template_key, item.system_template, item.user_template, parameters);
       }
-      add("EXTRACTION:global:standard", "EXTRACTION", null, "standard", KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT, buildKnowledgeExtractionPrompt("resume", "{{documentText}}").replace("Document type: resume", "Document type: {{documentType}}"));
-      add("CHAT:global:standard", "CHAT", null, "standard", CHAT_SYSTEM_INSTRUCTION, "{{candidateContext}}{{history}}USER: {{message}}\n\nRespond helpfully and concisely as the ASSISTANT.");
     })();
+    this.seededFor = db;
   }
-  list(activeOnly = true): PromptRow[] {
+  list(): PromptRow[] {
     this.seed();
-    return (this.db.prepare(`SELECT * FROM prompts ${activeOnly ? "WHERE active=1" : ""} ORDER BY template_key,version`).all() as StoredPrompt[]).map(decode);
+    return (this.db.prepare("SELECT * FROM prompts ORDER BY template_key").all() as StoredPrompt[]).map(decode);
   }
-  getActive(purpose: PromptPurpose, mode: PromptMode | null = null, variant = "standard"): PromptRow {
+  get(purpose: PromptPurpose, mode: PromptMode | null = null, variant = "standard"): PromptRow {
     if (!(purpose in PLACEHOLDERS) || !["standard", "course_admission"].includes(variant)) throw new Error("Invalid prompt purpose or variant");
     if (purpose === "CHAT" || purpose === "EXTRACTION" ? mode !== null || variant !== "standard" : !["INTERVIEWER", "INTERVIEWEE", "MEETING"].includes(mode ?? "") || variant === "course_admission" && mode !== "INTERVIEWER") throw new Error("Invalid prompt mode or variant");
     const rows = this.list();
@@ -88,21 +104,16 @@ export class PromptRepository {
     if (!row) throw new Error("Prompt not found");
     return row;
   }
-  update(input: { key?: string; id?: string; baseVersion: number; system_template: string; user_template: string; parameters?: Record<string, unknown>; purpose?: PromptPurpose; mode?: PromptMode | null; variant?: string; reset?: boolean }): PromptRow {
-    if (!Number.isSafeInteger(input.baseVersion) || input.baseVersion < 1) throw new Error("baseVersion is required");
-    const current = this.list().find((row) => input.key ? row.template_key === input.key : row.id === input.id);
-    if (!current) {
-      if (input.id && this.list(false).some((row) => row.id === input.id)) throw new PromptConflictError("Prompt changed; reload before saving");
-      throw new Error("Prompt not found");
-    }
+  update(input: { key: string; system_template?: string; user_template?: string; parameters?: Record<string, unknown>; purpose?: PromptPurpose; mode?: PromptMode | null; variant?: string; reset?: boolean }): PromptRow {
+    const current = this.list().find((row) => row.template_key === input.key);
+    if (!current) throw new Error("Prompt not found");
     if (input.purpose !== undefined && input.purpose !== current.purpose || input.mode !== undefined && input.mode !== current.mode || input.variant !== undefined && input.variant !== current.variant) throw new Error("Prompt purpose, mode and variant are immutable");
-    if (input.reset) {
-      const source = this.list(false).find((row) => row.template_key === current.template_key && row.version === 1)!;
-      input = { ...input, system_template: source.system_template, user_template: source.user_template, parameters: source.parameters };
-    }
-    validateText(input.system_template, true, current.purpose);
-    validateText(input.user_template, false, current.purpose);
-    const parameters = input.parameters ?? current.parameters;
+    const original = input.reset ? defaultPrompts().find((item) => item.template_key === current.template_key) : undefined;
+    const systemTemplate = original ? original.system_template : input.system_template;
+    const userTemplate = original ? original.user_template : input.user_template;
+    validateText(systemTemplate, true, current.purpose);
+    validateText(userTemplate, false, current.purpose);
+    const parameters = original ? original.parameters : input.parameters ?? current.parameters;
     if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) throw new Error("Invalid prompt parameters");
     const encoded = JSON.stringify(parameters);
     if (encoded.length > 50000) throw new Error("Prompt parameters too large");
@@ -113,14 +124,9 @@ export class PromptRepository {
       if ((key === "id" || key === "callType" || key === "confidencePolicy") && value !== current.parameters[key]) throw new Error(`Immutable prompt parameter: ${key}`);
     }
     if (current.purpose === "ANSWER" && allowedFields.some((key) => !(key in parameters))) throw new Error("Missing call prompt parameter");
-    return this.db.transaction(() => {
-      const active = this.db.prepare("SELECT version FROM prompts WHERE template_key=? AND active=1").get(current.template_key) as { version: number };
-      if (active.version !== input.baseVersion) throw new PromptConflictError("Prompt changed; reload before saving");
-      this.db.prepare("UPDATE prompts SET active=0 WHERE template_key=? AND active=1").run(current.template_key);
-      const row = { ...current, id: randomUUID(), version: active.version + 1, system_template: input.system_template, user_template: input.user_template, parameters, created_at: new Date().toISOString() };
-      this.db.prepare("INSERT INTO prompts(id,template_key,purpose,mode,variant,version,system_template,user_template,parameters_json,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,1,?)").run(row.id, row.template_key, row.purpose, row.mode, row.variant, row.version, row.system_template, row.user_template, encoded, row.created_at);
-      return row;
-    })();
+    this.db.prepare("UPDATE prompts SET system_template=?,user_template=?,parameters_json=?,customized=?,updated_at=? WHERE template_key=?")
+      .run(systemTemplate, userTemplate, encoded, original ? 0 : 1, new Date().toISOString(), current.template_key);
+    return decode(this.db.prepare("SELECT * FROM prompts WHERE template_key=?").get(current.template_key) as StoredPrompt);
   }
 }
 export const promptRepository = new PromptRepository();

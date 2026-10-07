@@ -7,7 +7,7 @@ import { getDatabase } from "../db/connection";
 import { LEGACY_IMPORT_STATUS_KEY, type LegacyMigrationReport } from "../db/legacyMigration";
 
 const BACKUP_ID = /^backup-\d{8}T\d{9}Z-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.db$/;
-const COUNT_TABLES = ["profiles", "knowledge_bases", "sessions", "transcript_turns", "knowledge_documents", "knowledge_entries", "knowledge_variants", "questions", "model_requests", "model_runs", "retrieval_items", "chat_threads", "chat_messages", "background_jobs", "import_receipts"] as const;
+const COUNT_TABLES = ["knowledge_bases", "sessions", "transcript_turns", "knowledge_documents", "knowledge_entries", "knowledge_variants", "questions", "model_requests", "model_runs", "retrieval_items", "chat_threads", "chat_messages", "import_receipts"] as const;
 export class MaintenanceError extends Error {
   constructor(message: string, public readonly status = 400) { super(message); }
 }

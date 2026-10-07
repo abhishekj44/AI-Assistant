@@ -1,47 +1,26 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 
-export const LOCAL_PROFILE_ID = "local-user";
 export const DEFAULT_KNOWLEDGE_BASE_ID = "personal-knowledge";
 
 const migrations = [
   {
     version: 1,
-    name: "profiles_and_knowledge_bases",
+    name: "initial_schema",
     sql: `
-      CREATE TABLE profiles (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL CHECK(kind IN ('LOCAL_USER', 'CONTACT')),
-        display_name TEXT NOT NULL,
-        persona_notes TEXT NOT NULL DEFAULT '',
-        metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
       CREATE TABLE knowledge_bases (
         id TEXT PRIMARY KEY,
-        profile_id TEXT REFERENCES profiles(id) ON DELETE RESTRICT,
         kind TEXT NOT NULL CHECK(kind IN ('PERSONAL', 'JOB', 'REFERENCE')),
         name TEXT NOT NULL,
         company TEXT,
         revision INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'ARCHIVED')),
+        baseline_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(baseline_json)),
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        CHECK(kind != 'PERSONAL' OR profile_id IS NOT NULL)
+        updated_at TEXT NOT NULL
       );
-      CREATE INDEX knowledge_bases_profile ON knowledge_bases(profile_id);
-    `,
-  },
-  {
-    version: 2,
-    name: "application_storage_and_search",
-    sql: `
-      ALTER TABLE knowledge_bases ADD COLUMN baseline_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(baseline_json));
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
-        local_profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
-        remote_profile_id TEXT REFERENCES profiles(id) ON DELETE RESTRICT,
         mode TEXT NOT NULL CHECK(mode IN ('INTERVIEWER', 'INTERVIEWEE', 'MEETING')),
         variant TEXT NOT NULL DEFAULT 'standard' CHECK(variant IN ('standard', 'course_admission')),
         company TEXT NOT NULL DEFAULT '',
@@ -58,13 +37,14 @@ const migrations = [
         next_sequence INTEGER NOT NULL DEFAULT 0,
         owner_tab_id TEXT,
         lease_expires_at INTEGER,
-        revision INTEGER NOT NULL DEFAULT 0
+        accept_late_until INTEGER,
+        job_description TEXT NOT NULL DEFAULT '' CHECK(length(job_description) <= 12000),
+        candidate_profile TEXT NOT NULL DEFAULT '' CHECK(length(candidate_profile) <= 12000)
       );
       CREATE INDEX sessions_history ON sessions(status, started_at DESC);
       CREATE TABLE session_knowledge_bases (
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         knowledge_base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE RESTRICT,
-        usage_role TEXT NOT NULL CHECK(usage_role IN ('PERSONAL_FACTS', 'REMOTE_CONTEXT', 'JOB_CONTEXT', 'REFERENCE')),
         PRIMARY KEY(session_id, knowledge_base_id)
       );
       CREATE INDEX session_bases_base ON session_knowledge_bases(knowledge_base_id);
@@ -99,20 +79,16 @@ const migrations = [
       );
       CREATE INDEX documents_base ON knowledge_documents(knowledge_base_id);
       CREATE TABLE prompts (
-        id TEXT PRIMARY KEY,
-        template_key TEXT NOT NULL,
+        template_key TEXT PRIMARY KEY,
         purpose TEXT NOT NULL CHECK(purpose IN ('ANSWER', 'SUMMARY', 'MEMORY', 'EXTRACTION', 'CHAT')),
         mode TEXT CHECK(mode IS NULL OR mode IN ('INTERVIEWER', 'INTERVIEWEE', 'MEETING')),
         variant TEXT NOT NULL DEFAULT 'standard' CHECK(variant IN ('standard', 'course_admission')),
-        version INTEGER NOT NULL CHECK(version > 0),
         system_template TEXT NOT NULL,
         user_template TEXT NOT NULL DEFAULT '',
         parameters_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(parameters_json)),
-        active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
-        created_at TEXT NOT NULL,
-        UNIQUE(template_key, version)
+        customized INTEGER NOT NULL DEFAULT 0 CHECK(customized IN (0, 1)),
+        updated_at TEXT NOT NULL
       );
-      CREATE UNIQUE INDEX prompts_active ON prompts(template_key) WHERE active = 1;
       CREATE TABLE questions (
         id TEXT PRIMARY KEY,
         session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
@@ -128,7 +104,7 @@ const migrations = [
         id TEXT PRIMARY KEY,
         session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
         question_id TEXT REFERENCES questions(id) ON DELETE SET NULL,
-        prompt_id TEXT REFERENCES prompts(id) ON DELETE RESTRICT,
+        prompt_key TEXT,
         purpose TEXT NOT NULL,
         mode_snapshot TEXT CHECK(mode_snapshot IS NULL OR mode_snapshot IN ('INTERVIEWER', 'INTERVIEWEE', 'MEETING')),
         variant_snapshot TEXT NOT NULL DEFAULT 'standard',
@@ -138,6 +114,7 @@ const migrations = [
         created_at TEXT NOT NULL
       );
       CREATE INDEX requests_session ON model_requests(session_id, created_at DESC);
+      CREATE INDEX requests_question ON model_requests(question_id);
       CREATE TABLE model_runs (
         id TEXT PRIMARY KEY,
         request_id TEXT NOT NULL REFERENCES model_requests(id) ON DELETE CASCADE,
@@ -155,10 +132,13 @@ const migrations = [
         display_tag TEXT NOT NULL DEFAULT 'Interview Answer',
         feedback TEXT CHECK(feedback IS NULL OR feedback IN ('GOOD', 'POOR')),
         feedback_at TEXT,
+        owner_pid INTEGER,
+        checkpoint_at TEXT,
         UNIQUE(request_id, slot, attempt_no)
       );
       CREATE INDEX runs_history ON model_runs(started_at DESC, id);
       CREATE INDEX runs_saved ON model_runs(saved_at DESC) WHERE saved_at IS NOT NULL;
+      CREATE INDEX runs_owner ON model_runs(owner_pid, status);
       CREATE TABLE knowledge_entries (
         id TEXT PRIMARY KEY,
         knowledge_base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE RESTRICT,
@@ -225,18 +205,16 @@ const migrations = [
       CREATE TABLE app_settings (
         key TEXT PRIMARY KEY,
         value_json TEXT NOT NULL CHECK(json_valid(value_json)),
-        revision INTEGER NOT NULL DEFAULT 1,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE chat_threads (
         id TEXT PRIMARY KEY,
-        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
         session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
         title TEXT NOT NULL DEFAULT 'Chat',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      CREATE INDEX chat_threads_profile ON chat_threads(profile_id, updated_at DESC);
+      CREATE INDEX chat_threads_updated ON chat_threads(updated_at DESC);
       CREATE TABLE chat_messages (
         id TEXT PRIMARY KEY,
         thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
@@ -247,24 +225,6 @@ const migrations = [
       );
       CREATE INDEX chat_messages_thread ON chat_messages(thread_id, created_at, id);
       CREATE INDEX chat_messages_run ON chat_messages(run_id);
-      CREATE TABLE background_jobs (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL CHECK(kind IN ('EXTRACT', 'INDEX', 'MEMORY', 'SUMMARY')),
-        session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
-        document_id TEXT REFERENCES knowledge_documents(id) ON DELETE CASCADE,
-        dedupe_key TEXT NOT NULL UNIQUE,
-        status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),
-        attempts INTEGER NOT NULL DEFAULT 0,
-        run_after INTEGER NOT NULL DEFAULT 0,
-        locked_until INTEGER,
-        parameters_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(parameters_json)),
-        error TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE INDEX jobs_ready ON background_jobs(status, run_after);
-      CREATE INDEX jobs_session ON background_jobs(session_id);
-      CREATE INDEX jobs_document ON background_jobs(document_id);
       CREATE TABLE import_receipts (
         id TEXT PRIMARY KEY,
         origin TEXT NOT NULL,
@@ -277,26 +237,11 @@ const migrations = [
     `,
   },
   {
-    version: 3,
-    name: "run_recovery_and_late_transcript_grace",
+    version: 2,
+    name: "giving_interview_role",
     sql: `
-      ALTER TABLE model_runs ADD COLUMN owner_pid INTEGER;
-      ALTER TABLE model_runs ADD COLUMN checkpoint_at TEXT;
-      ALTER TABLE sessions ADD COLUMN accept_late_until INTEGER;
-      CREATE INDEX runs_owner ON model_runs(owner_pid, status);
-      CREATE INDEX requests_prompt ON model_requests(prompt_id);
-      CREATE INDEX requests_question ON model_requests(question_id);
-    `,
-  },
-  {
-    version: 4,
-    name: "role_specific_interview_context",
-    sql: `
-      ALTER TABLE sessions ADD COLUMN job_description TEXT NOT NULL DEFAULT '' CHECK(length(job_description) <= 12000);
-      ALTER TABLE sessions ADD COLUMN candidate_profile TEXT NOT NULL DEFAULT '' CHECK(length(candidate_profile) <= 12000);
-      DELETE FROM session_knowledge_bases WHERE session_id IN (SELECT id FROM sessions WHERE mode IN ('INTERVIEWEE', 'INTERVIEWER'));
-      INSERT INTO session_knowledge_bases(session_id, knowledge_base_id, usage_role)
-        SELECT id, 'personal-knowledge', 'PERSONAL_FACTS' FROM sessions WHERE mode = 'INTERVIEWEE';
+      ALTER TABLE sessions ADD COLUMN job_title TEXT NOT NULL DEFAULT '' CHECK(length(job_title) <= 200);
+      ALTER TABLE sessions ADD COLUMN seniority TEXT NOT NULL DEFAULT '' CHECK(length(seniority) <= 100);
     `,
   },
 ];
@@ -312,27 +257,25 @@ export function migrateDatabase(database: Database.Database): void {
   `);
   const applied = database.prepare("SELECT version, checksum FROM schema_migrations ORDER BY version")
     .all() as Array<{ version: number; checksum: string }>;
+  const checksum = (sql: string) => crypto.createHash("sha256").update(sql).digest("hex");
+  for (const migration of migrations) {
+    const previous = applied.find((entry) => entry.version === migration.version);
+    if (previous && previous.checksum !== checksum(migration.sql)) {
+      throw new Error(`Migration ${migration.version} checksum mismatch: this database was created by a different schema version (for example a pre-release build) and cannot be upgraded in place. Move the database file and its -wal and -shm files aside to start fresh, or restore a matching backup.`);
+    }
+  }
   if (applied.some((entry) => entry.version > migrations.at(-1)!.version)) {
     throw new Error("The database was created by a newer application version");
   }
   for (const migration of migrations) {
-    const checksum = crypto.createHash("sha256").update(migration.sql).digest("hex");
-    const previous = applied.find((entry) => entry.version === migration.version);
-    if (previous) {
-      if (previous.checksum !== checksum) throw new Error(`Migration ${migration.version} checksum mismatch`);
-      continue;
-    }
+    if (applied.some((entry) => entry.version === migration.version)) continue;
     database.transaction(() => {
       database.exec(migration.sql);
       database.prepare("INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)")
-        .run(migration.version, migration.name, checksum, new Date().toISOString());
+        .run(migration.version, migration.name, checksum(migration.sql), new Date().toISOString());
     }).immediate();
   }
   const now = new Date().toISOString();
-  database.transaction(() => {
-    database.prepare("INSERT OR IGNORE INTO profiles(id, kind, display_name, created_at, updated_at) VALUES (?, 'LOCAL_USER', 'Me', ?, ?)")
-      .run(LOCAL_PROFILE_ID, now, now);
-    database.prepare("INSERT OR IGNORE INTO knowledge_bases(id, profile_id, kind, name, created_at, updated_at) VALUES (?, ?, 'PERSONAL', 'Candidate Knowledge', ?, ?)")
-      .run(DEFAULT_KNOWLEDGE_BASE_ID, LOCAL_PROFILE_ID, now, now);
-  }).immediate();
+  database.prepare("INSERT OR IGNORE INTO knowledge_bases(id, kind, name, created_at, updated_at) VALUES (?, 'PERSONAL', 'Candidate Knowledge', ?, ?)")
+    .run(DEFAULT_KNOWLEDGE_BASE_ID, now, now);
 }

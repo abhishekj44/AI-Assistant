@@ -89,10 +89,15 @@ function formatWebContext(results: WebSearchResult[]): string {
 
 function formatSessionInfo(info?: SessionInfo): string {
   if (!info) return "";
+  const callType = normalizeCallType(info.callType);
   return JSON.stringify({
-    callType: normalizeCallType(info.callType),
+    callType,
     company: clip(info.company || "", 160),
-    details: clip(info.details || "", 500),
+    ...(callType === "giving_interview" ? {
+      jobTitle: clip(info.jobTitle || "", 200),
+      seniority: clip(info.seniority || "", 100),
+      additionalContext: clip(info.details || "", 1_000),
+    } : { details: clip(info.details || "", 500) }),
   });
 }
 
@@ -133,7 +138,14 @@ export function buildAnswerSystemInstruction(
     : "- Do not mechanically label every section; make the response sound natural when spoken.";
 
   const interviewContextRule = template.callType === "giving_interview"
-    ? "- Use the saved resume as the candidate's factual background. The job description describes the target role, not experience the candidate has already gained. Tailor relevant examples without inventing qualifications."
+    ? `- Use the saved resume as the candidate's factual background. The job description describes the target role, not experience the candidate has already gained. Never invent qualifications.
+- Use the job description to understand expected role, skills and seniority.
+- The job description is a soft relevance signal, not a hard constraint or a filter on which questions to answer.
+- Do not assume every question will relate directly to the job description.
+- Always answer the actual question asked.
+- When the question is related to the job description, strongly tailor the answer's relevant skills, examples, terminology and depth to the target role, using only supported candidate facts.
+- When the question is unrelated to the job description, answer normally using relevant knowledge-base evidence and general knowledge. Do not force a connection to the job description or redirect the answer back to the target role.
+- Use the stated seniority to calibrate depth, not to change the subject of the answer.`
     : template.callType === "taking_interview"
       ? "- Evaluate the candidate's latest response against the supplied candidate profile and the conversation between both speakers. ME is the local interviewer; CANDIDATE is the remote person. Distinguish profile claims from demonstrated answers, relate the response to the interviewer's question, and avoid repeating questions already answered."
       : "";

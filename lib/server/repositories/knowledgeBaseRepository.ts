@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../db/connection";
-import { DEFAULT_KNOWLEDGE_BASE_ID, LOCAL_PROFILE_ID } from "../db/migrations";
+import { DEFAULT_KNOWLEDGE_BASE_ID } from "../db/migrations";
 
 export type KnowledgeBaseKind = "PERSONAL" | "JOB" | "REFERENCE";
 export interface KnowledgeBase { id: string; name: string; company: string | null; kind: KnowledgeBaseKind }
@@ -19,14 +19,14 @@ export class KnowledgeBaseRepository {
   private get database() { return this.suppliedDatabase ?? getDatabase(); }
 
   list(): KnowledgeBase[] {
-    return this.database.prepare("SELECT id,name,company,kind FROM knowledge_bases WHERE status='ACTIVE' AND (profile_id=? OR (profile_id IS NULL AND kind IN ('JOB','REFERENCE'))) ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,name,id")
-      .all(LOCAL_PROFILE_ID, DEFAULT_KNOWLEDGE_BASE_ID) as KnowledgeBase[];
+    return this.database.prepare("SELECT id,name,company,kind FROM knowledge_bases WHERE status='ACTIVE' ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,name,id")
+      .all(DEFAULT_KNOWLEDGE_BASE_ID) as KnowledgeBase[];
   }
 
   require(id: string = DEFAULT_KNOWLEDGE_BASE_ID): KnowledgeBase {
     validateKnowledgeBaseId(id);
-    const base = this.database.prepare("SELECT id,name,company,kind FROM knowledge_bases WHERE id=? AND status='ACTIVE' AND (profile_id=? OR (profile_id IS NULL AND kind IN ('JOB','REFERENCE')))")
-      .get(id, LOCAL_PROFILE_ID) as KnowledgeBase | undefined;
+    const base = this.database.prepare("SELECT id,name,company,kind FROM knowledge_bases WHERE id=? AND status='ACTIVE'")
+      .get(id) as KnowledgeBase | undefined;
     if (!base) throw new KnowledgeBaseError("Knowledge base not found or unavailable", 404);
     return base;
   }
@@ -42,8 +42,8 @@ export class KnowledgeBaseRepository {
     const fields = this.fields(input);
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.database.prepare("INSERT INTO knowledge_bases(id,profile_id,kind,name,company,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-      .run(id, input.kind === "PERSONAL" ? LOCAL_PROFILE_ID : null, input.kind, fields.name, fields.company, now, now);
+    this.database.prepare("INSERT INTO knowledge_bases(id,kind,name,company,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+      .run(id, input.kind, fields.name, fields.company, now, now);
     return this.require(id);
   }
 

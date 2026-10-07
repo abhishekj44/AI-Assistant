@@ -11,7 +11,7 @@ import { KnowledgeRepository } from "../lib/server/repositories/knowledgeReposit
 import { ModelRunRepository } from "../lib/server/repositories/modelRunRepository";
 import { EMPTY_KNOWLEDGE_PACK } from "../lib/knowledge/types";
 
-test("live route uses FTS context and prompt versions, committing before the completed SSE event", async (context) => {
+test("live route uses FTS context and the saved prompt, committing before the completed SSE event", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-completion-"));
   const cwd = process.cwd();
   const previousPath = process.env.COPILOT_DB_PATH;
@@ -27,8 +27,8 @@ test("live route uses FTS context and prompt versions, committing before the com
   });
   new KnowledgeRepository(database).replacePack({ ...structuredClone(EMPTY_KNOWLEDGE_PACK), facts: ["I use SQLite for local transactions."] });
   const prompts = new PromptRepository(database);
-  const seed = prompts.getActive("ANSWER", "INTERVIEWEE");
-  const active = prompts.update({ id: seed.id, baseVersion: seed.version, system_template: "Speak clearly.", user_template: "Explain the practical trade-off." });
+  const seed = prompts.get("ANSWER", "INTERVIEWEE");
+  prompts.update({ key: seed.template_key, system_template: "Speak clearly. Role: {{jobTitle}}; Company: {{company}}; Seniority: {{seniority}}; Additional context: {{additionalContext}}.", user_template: "Explain the practical trade-off." });
   context.mock.method(completionProviders, "targets", () => [{ provider: "gemini", model: "mock" }]);
   context.mock.method(completionProviders, "parallel", async (prompt: string, options: { systemInstruction?: string }) => {
     assert.ok(prompt.includes("SQLite for local transactions"));
@@ -36,11 +36,15 @@ test("live route uses FTS context and prompt versions, committing before the com
     assert.ok(prompt.includes("Design reliable database storage"));
     assert.ok(prompt.endsWith("Explain the practical trade-off."));
     assert.ok(options.systemInstruction?.includes("Speak clearly."));
+    assert.ok(options.systemInstruction?.includes("Role: Backend Engineer; Company: ; Seniority: Senior; Additional context: Architecture round."));
+    assert.ok(options.systemInstruction?.includes("Use the job description to understand expected role, skills and seniority."));
+    assert.ok(options.systemInstruction?.includes("Always answer the actual question asked."));
     return [{ provider: "gemini", model: "mock", slot: "A", stream: (async function* () { yield { text: "Use WAL and short transactions." }; })() }];
   });
   const request = new Request("http://localhost/api/completion", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
     flag: "copilot", focusQuestion: "Why SQLite?", sessionId: "session", ownerTabId: "tab",
-    sessionInfo: { callType: "giving_interview", company: "Example", details: "", jobDescription: "Design reliable database storage" },
+    sessionInfo: { callType: "giving_interview", company: "", details: "Architecture round", jobTitle: "  Backend Engineer  ",
+      jobDescription: "Design reliable database storage", seniority: "  Senior  " },
     recentTurns: [{ id: "turn", sequenceId: 1, speaker: "interviewer", text: "Why SQLite?", timestamp: new Date().toISOString() }],
   }) });
   const response = await POST(request);
@@ -54,8 +58,62 @@ test("live route uses FTS context and prompt versions, committing before the com
   assert.ok(run.savedAt);
   assert.equal(run.output, "Use WAL and short transactions.");
   assert.equal(run.metrics.retrievalEngine, "sqlite-fts5+lexical");
-  assert.equal((database.prepare("SELECT prompt_id FROM model_requests WHERE id = ?").get(run.requestId) as { prompt_id: string }).prompt_id, active.id);
+  assert.equal((database.prepare("SELECT prompt_key FROM model_requests WHERE id = ?").get(run.requestId) as { prompt_key: string }).prompt_key, seed.template_key);
+  assert.equal(run.metrics.promptCustomized, true);
   assert.equal((database.prepare("SELECT count(*) AS count FROM transcript_turns").get() as { count: number }).count, 1);
+  assert.deepEqual(database.prepare("SELECT job_title, seniority, company, details FROM sessions WHERE id='session'").get(),
+    { job_title: "Backend Engineer", seniority: "Senior", company: "", details: "Architecture round" });
+});
+
+test("Giving answers an unrelated question using its own KB evidence without a JD retrieval constraint", async context => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-unrelated-"));
+  const cwd = process.cwd();
+  const previousPath = process.env.COPILOT_DB_PATH;
+  process.chdir(root);
+  process.env.COPILOT_DB_PATH = path.join(root, "test.db");
+  const database = getDatabase();
+  context.after(() => {
+    database.close(); process.chdir(cwd);
+    if (previousPath) process.env.COPILOT_DB_PATH = previousPath;
+    else delete process.env.COPILOT_DB_PATH;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  new KnowledgeRepository(database).replacePack({ ...structuredClone(EMPTY_KNOWLEDGE_PACK),
+    facts: ["CSS specificity: class selectors outrank element selectors."] });
+  const question = "Explain CSS specificity.";
+  const additionalContext = `${"Architecture round. ".repeat(35)}Context tail retained`;
+  context.mock.method(completionProviders, "targets", () => [{ provider: "gemini", model: "mock" }]);
+  context.mock.method(completionProviders, "parallel", async (prompt: string, options: { systemInstruction?: string }) => {
+    assert.ok(prompt.includes("CSS specificity: class selectors outrank element selectors."));
+    assert.ok(prompt.includes(question));
+    assert.ok(prompt.includes("Design reliable database storage"));
+    assert.ok(prompt.includes('"jobTitle":"Backend Engineer"'));
+    assert.ok(prompt.includes('"seniority":"Junior"'));
+    assert.ok(prompt.includes("Context tail retained"));
+    assert.ok(options.systemInstruction?.includes("soft relevance signal, not a hard constraint"));
+    assert.ok(options.systemInstruction?.includes("Do not assume every question will relate directly to the job description."));
+    assert.ok(options.systemInstruction?.includes("answer normally using relevant knowledge-base evidence and general knowledge"));
+    assert.ok(options.systemInstruction?.includes("Do not force a connection to the job description"));
+    return [{ provider: "gemini", model: "mock", slot: "A", stream: (async function* () { yield { text: "Class selectors take precedence over element selectors." }; })() }];
+  });
+  const sessionInfo = { callType: "giving_interview", company: "", details: additionalContext, jobTitle: "Backend Engineer",
+    jobDescription: "Design reliable database storage", seniority: "Junior" };
+  const response = await POST(new Request("http://localhost/api/completion", { method: "POST", body: JSON.stringify({
+    flag: "copilot", focusQuestion: question, sessionInfo,
+    recentTurns: [{ id: "turn", sequenceId: 1, speaker: "interviewer", text: question, timestamp: new Date().toISOString() }],
+  }) }));
+  assert.equal(response.status, 200);
+  const text = await response.text();
+  assert.ok(text.includes("event: done_a"), text);
+  const run = new ModelRunRepository(database).list()[0];
+  assert.equal(run.question, question);
+  assert.equal(run.output, "Class selectors take precedence over element selectors.");
+  for (const patch of [{ jobTitle: "x".repeat(201) }, { seniority: "x".repeat(101) }, { jobTitle: 123 }]) {
+    const invalid = await POST(new Request("http://localhost/api/completion", { method: "POST", body: JSON.stringify({
+      flag: "copilot", focusQuestion: question, sessionInfo: { ...sessionInfo, ...patch },
+    }) }));
+    assert.equal(invalid.status, 400);
+  }
 });
 
 test("Taking Interview evaluates the stored candidate profile against both speakers, never the local resume", async context => {

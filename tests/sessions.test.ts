@@ -46,25 +46,27 @@ test("end commits before summary, late batches never reopen and stale memory can
   repository.updateMemory("session", { ...EMPTY_MEETING_MEMORY, summary: "old" }, 1, "tab");
   assert.equal(repository.get("session")?.memory.summary, "new");
   const ended = repository.end("session", "tab");
-  assert.equal(ended.summaryStatus, "PENDING");
+  assert.equal(ended.summaryStatus, "NONE");
   assert.equal(ended.status, "ENDED");
   assert.equal(repository.restoreActive(), null);
   repository.start({ id: "session", ownerTabId: "tab" });
   repository.end("session", "tab");
-  const oldJob = repository.claimJob()!;
+  const covered = repository.claimSummary("session")!;
+  assert.equal(covered, 2);
   repository.appendTurns("session", [turn("three")], "tab");
   repository.updateMemory("session", { ...EMPTY_MEETING_MEMORY, summary: "late" }, 3, "tab");
   assert.equal(repository.get("session")?.memory.summary, "new");
-  repository.completeJob(oldJob, "old summary");
-  assert.equal(repository.get("session")?.summaryStatus, "PENDING");
-  repository.completeJob(repository.claimJob()!, "new summary");
-  repository.updateSummary("session", "stale", 2);
-  assert.equal(repository.get("session")?.summary, "new summary");
+  assert.equal(repository.completeSummary("session", "summary of two turns", covered), true);
+  const partial = repository.get("session")!;
+  assert.equal(partial.summaryStatus, "READY");
+  assert.ok(partial.summaryThroughSequence < partial.throughSequence);
+  repository.updateSummary("session", "stale", 1);
+  assert.equal(repository.get("session")?.summary, "summary of two turns");
   assert.equal(repository.get("session")?.endedAt, ended.endedAt);
   assert.equal(repository.get("session")?.status, "ENDED");
 });
 
-test("lease requires explicit takeover and expired jobs can be reclaimed", context => {
+test("lease requires explicit takeover", context => {
   const database = openDatabase(":memory:");
   context.after(() => database.close());
   const repository = new SessionRepository(database);
@@ -75,14 +77,49 @@ test("lease requires explicit takeover and expired jobs can be reclaimed", conte
   repository.start({ id: "session", ownerTabId: "two", takeover: true });
   assert.throws(() => repository.appendTurns("session", [turn("one")], "one"), /another tab/);
   repository.end("session", "two", [turn("last")]);
-  const first = repository.claimJob()!;
-  database.prepare("UPDATE background_jobs SET locked_until=0 WHERE id=?").run(first.id);
-  const reclaimed = repository.claimJob()!;
-  assert.equal(reclaimed.attempts, 2);
-  repository.completeJob(first, "stale worker");
+  assert.equal(repository.get("session")?.status, "ENDED");
+});
+
+test("summary claims run once, failures wait for a manual retry, and a restart frees stuck claims", context => {
+  const database = openDatabase(":memory:");
+  context.after(() => database.close());
+  const repository = new SessionRepository(database);
+  repository.start({ id: "session", ownerTabId: "tab" });
+  repository.appendTurns("session", [turn("one"), turn("two")], "tab");
+  assert.equal(repository.claimSummary("session", true), null);
+  repository.end("session", "tab");
+  assert.equal(repository.claimSummary("session"), 2);
   assert.equal(repository.get("session")?.summaryStatus, "PENDING");
-  repository.failJob(reclaimed, "provider unavailable");
-  assert.equal(repository.claimJob(), null);
+  assert.equal(repository.claimSummary("session"), null);
+  assert.equal(repository.claimSummary("session", true), null);
+  repository.failSummary("session", "provider unavailable");
+  assert.equal(repository.get("session")?.summaryStatus, "FAILED");
+  assert.equal(repository.get("session")?.summaryError, "provider unavailable");
+  assert.equal(repository.claimSummary("session"), null);
+  assert.equal(repository.claimSummary("session", true), 2);
+  assert.equal(repository.recoverInterruptedSummaries(), 1);
+  assert.equal(repository.get("session")?.summaryStatus, "FAILED");
+  assert.match(repository.get("session")!.summaryError!, /stopped before/);
+  assert.equal(repository.recoverInterruptedSummaries(), 0);
+  assert.equal(repository.claimSummary("session", true), 2);
+  assert.equal(repository.completeSummary("session", "Done", 2), true);
+  assert.equal(repository.completeSummary("session", "Unclaimed duplicate", 2), false);
+  const done = repository.get("session")!;
+  assert.equal(done.summary, "Done");
+  assert.equal(done.summaryStatus, "READY");
+  assert.equal(done.summaryError, undefined);
+  assert.equal(repository.claimSummary("session"), null);
+  assert.equal(repository.claimSummary("missing", true), null);
+});
+
+test("sessions without any turns are never summarized", context => {
+  const database = openDatabase(":memory:");
+  context.after(() => database.close());
+  const repository = new SessionRepository(database);
+  repository.start({ id: "empty", ownerTabId: "tab" });
+  repository.end("empty", "tab");
+  assert.equal(repository.claimSummary("empty", true), null);
+  assert.equal(repository.get("empty")?.summaryStatus, "NONE");
 });
 
 test("legacy import is idempotent and cannot bypass live ownership", context => {
@@ -94,6 +131,10 @@ test("legacy import is idempotent and cannot bypass live ownership", context => 
   repository.importSnapshot(snapshot);
   assert.equal(repository.get("import")?.transcripts.length, 1);
   assert.equal(repository.get("import")?.memory.summary, "legacy");
+  assert.equal(repository.get("import")?.summaryStatus, "NONE");
+  repository.importSnapshot({ ...snapshot, id: "import-summary", summary: "Imported summary" });
+  assert.equal(repository.get("import-summary")?.summary, "Imported summary");
+  assert.equal(repository.get("import-summary")?.summaryStatus, "READY");
   repository.start({ id: "live", ownerTabId: "tab" });
   assert.throws(() => repository.importSnapshot({ ...snapshot, id: "live" }), /live-owned/);
 });

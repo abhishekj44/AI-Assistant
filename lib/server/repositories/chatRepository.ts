@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../db/connection";
-import { LOCAL_PROFILE_ID } from "../db/migrations";
 import { ModelRunRepository, type ModelRequestInput } from "./modelRunRepository";
 import type { LLMStreamHandle, LLMRequestOptions } from "../../llm/types";
 import type { PromptRepository } from "./promptRepository";
 import { renderRuntimePrompt } from "../runtimePrompts";
 
-export interface ChatThread { id: string; profile_id: string; session_id: string | null; title: string; created_at: string; updated_at: string }
+export interface ChatThread { id: string; session_id: string | null; title: string; created_at: string; updated_at: string }
 export interface ChatMessage { id: string; thread_id: string; role: "USER" | "ASSISTANT"; content: string; run_id: string | null; created_at: string }
 export class ChatRepository {
   constructor(private readonly database?: Database.Database) {}
@@ -16,13 +15,13 @@ export class ChatRepository {
     const id = input.id ?? randomUUID();
     if (typeof id !== "string" || !id.trim() || id.length > 200) throw new Error("Invalid thread id");
     const now = new Date().toISOString();
-    this.db.prepare("INSERT OR IGNORE INTO chat_threads(id,profile_id,session_id,title,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(id, LOCAL_PROFILE_ID, input.sessionId ?? null, (input.title || "Chat").slice(0, 160), now, now);
+    this.db.prepare("INSERT OR IGNORE INTO chat_threads(id,session_id,title,created_at,updated_at) VALUES (?,?,?,?,?)").run(id, input.sessionId ?? null, (input.title || "Chat").slice(0, 160), now, now);
     const thread = this.getThread(id);
     if (!thread) throw new Error("Thread not found");
     return thread;
   }
-  listThreads(): ChatThread[] { return this.db.prepare("SELECT * FROM chat_threads WHERE profile_id=? ORDER BY updated_at DESC,rowid DESC").all(LOCAL_PROFILE_ID) as ChatThread[]; }
-  getThread(id: string): ChatThread | undefined { return this.db.prepare("SELECT * FROM chat_threads WHERE id=? AND profile_id=?").get(id, LOCAL_PROFILE_ID) as ChatThread | undefined; }
+  listThreads(): ChatThread[] { return this.db.prepare("SELECT * FROM chat_threads ORDER BY updated_at DESC,rowid DESC").all() as ChatThread[]; }
+  getThread(id: string): ChatThread | undefined { return this.db.prepare("SELECT * FROM chat_threads WHERE id=?").get(id) as ChatThread | undefined; }
   getMessages(threadId: string): ChatMessage[] {
     if (!this.getThread(threadId)) throw new Error("Thread not found");
     return this.db.prepare("SELECT * FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid").all(threadId) as ChatMessage[];
@@ -41,7 +40,7 @@ export class ChatRepository {
     this.db.transaction(() => {
       const busy = this.db.prepare("SELECT 1 FROM chat_messages JOIN model_runs ON model_runs.id=chat_messages.run_id WHERE thread_id=? AND model_runs.status='RUNNING'").get(threadId);
       if (busy) throw new Error("Wait for the response before clearing chat");
-      this.db.prepare("DELETE FROM chat_threads WHERE id=? AND profile_id=?").run(threadId, LOCAL_PROFILE_ID);
+      this.db.prepare("DELETE FROM chat_threads WHERE id=?").run(threadId);
     }).immediate();
   }
   getMessageRun(messageId: string) {
@@ -141,7 +140,7 @@ export function createChatHandlers({ chats, prompts, generate, context }: ChatDe
         const values = { message, candidateContext: knowledge ? `<CANDIDATE_KNOWLEDGE>\n${knowledge}\n</CANDIDATE_KNOWLEDGE>\n\n` : "", history: history ? `<CONVERSATION_HISTORY>\n${history}\n</CONVERSATION_HISTORY>\n\n` : "" };
         const rendered = renderRuntimePrompt("CHAT", null, values, prompts);
         const prompt = rendered.prompt || `${values.candidateContext}${values.history}USER: ${message}\n\nRespond helpfully and concisely as the ASSISTANT.`;
-        const claim = chats.claimRun(messageId, { promptId: rendered.promptId, purpose: "CHAT", systemInstruction: rendered.systemInstruction, prompt, context: { history, candidateContext: knowledge, promptVersion: rendered.promptVersion } });
+        const claim = chats.claimRun(messageId, { promptKey: rendered.promptKey, purpose: "CHAT", systemInstruction: rendered.systemInstruction, prompt, context: { history, candidateContext: knowledge, promptCustomized: rendered.promptCustomized } });
         if (!claim.claimed) {
           if (claim.status !== "COMPLETED") return Response.json({ error: "Response is still generating", threadId, runId: claim.runId }, { status: 409 });
           return Response.json({ thread, reply: claim.output, runId: claim.runId, ...chats.page(resolvedThreadId) });

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { EMPTY_QA_BANK, type QABank, type QAEntry } from "../../qa/types";
 import { getDatabase } from "../db/connection";
-import { DEFAULT_KNOWLEDGE_BASE_ID, LOCAL_PROFILE_ID } from "../db/migrations";
+import { DEFAULT_KNOWLEDGE_BASE_ID } from "../db/migrations";
 import { indexContent } from "../retrieval/indexing";
 import { cleanString, sanitizeQAEntry } from "../retrieval/qaSanitization";
 import { normalizeSearch } from "../retrieval/normalization";
@@ -80,14 +80,13 @@ export class AnswerLibraryRepository {
   promoteRun(runId: string, baseId = DEFAULT_KNOWLEDGE_BASE_ID): { entryId: string; alreadyExists: boolean; bank: QABank } {
     return this.database.transaction(() => {
       const base = this.base(baseId);
-      if (base.kind !== "PERSONAL" || base.profile_id !== LOCAL_PROFILE_ID) throw new Error("Promotion requires the local personal profile");
+      if (base.kind !== "PERSONAL") throw new Error("Promotion requires a personal knowledge base");
       const run = this.database.prepare(`SELECT run.status, run.feedback, run.output_text, request.mode_snapshot, question.mode_snapshot AS question_mode,
-        question.primary_ask, request.session_id, session.local_profile_id
+        question.primary_ask
         FROM model_runs run JOIN model_requests request ON request.id = run.request_id
-        LEFT JOIN questions question ON question.id = request.question_id LEFT JOIN sessions session ON session.id = request.session_id WHERE run.id = ?`).get(runId) as { status: string; feedback: string; output_text: string; mode_snapshot: string | null; question_mode: string | null; primary_ask: string | null; session_id: string | null; local_profile_id: string | null } | undefined;
+        LEFT JOIN questions question ON question.id = request.question_id WHERE run.id = ?`).get(runId) as { status: string; feedback: string; output_text: string; mode_snapshot: string | null; question_mode: string | null; primary_ask: string | null } | undefined;
       if (!run) throw new Error("Model run not found");
       if (run.status !== "COMPLETED" || run.feedback !== "GOOD") throw new Error("Promotion requires a completed Good run");
-      if (run.session_id && run.local_profile_id !== LOCAL_PROFILE_ID) throw new Error("Run belongs to another personal profile");
       const existing = this.database.prepare("SELECT id, data_json, enabled, review_state FROM knowledge_entries WHERE knowledge_base_id = ? AND origin_run_id = ? AND kind = 'QA'").get(baseId, runId) as QARow | undefined;
       const mode = run.mode_snapshot || run.question_mode;
       const legacyLink = existing && JSON.parse(existing.data_json).importedPreparedLink === true;
@@ -102,8 +101,8 @@ export class AnswerLibraryRepository {
     })();
   }
 
-  private base(baseId: string): { profile_id: string | null; kind: string; updated_at: string } {
-    const row = this.database.prepare("SELECT profile_id, kind, updated_at FROM knowledge_bases WHERE id = ?").get(baseId) as { profile_id: string | null; kind: string; updated_at: string } | undefined;
+  private base(baseId: string): { kind: string; updated_at: string } {
+    const row = this.database.prepare("SELECT kind, updated_at FROM knowledge_bases WHERE id = ?").get(baseId) as { kind: string; updated_at: string } | undefined;
     if (!row) throw new Error("Knowledge base not found");
     return row;
   }
@@ -112,7 +111,7 @@ export class AnswerLibraryRepository {
 
   private touch(baseId: string, now = new Date().toISOString()): void {
     this.database.prepare("UPDATE knowledge_bases SET revision = revision + 1, updated_at = ? WHERE id = ?").run(now, baseId);
-    this.database.prepare("INSERT INTO app_settings(key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, revision=app_settings.revision + 1, updated_at=excluded.updated_at")
+    this.database.prepare("INSERT INTO app_settings(key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at")
       .run(`qa-bank:${baseId}`, JSON.stringify({ updatedAt: now }), now);
   }
 
@@ -123,11 +122,11 @@ export class AnswerLibraryRepository {
     const legacyLink = options.preserveTimestamps && options.originRunId || previous && JSON.parse(previous.data_json).importedPreparedLink;
     if (originRunId) {
       const base = this.base(baseId);
-      const run = this.database.prepare(`SELECT run.status, run.feedback, request.mode_snapshot, question.mode_snapshot AS question_mode, request.session_id, session.local_profile_id
+      const run = this.database.prepare(`SELECT run.status, run.feedback, request.mode_snapshot, question.mode_snapshot AS question_mode
         FROM model_runs run JOIN model_requests request ON request.id = run.request_id
-        LEFT JOIN questions question ON question.id = request.question_id LEFT JOIN sessions session ON session.id = request.session_id WHERE run.id = ?`).get(originRunId) as { status: string; feedback: string | null; mode_snapshot: string | null; question_mode: string | null; session_id: string | null; local_profile_id: string | null } | undefined;
+        LEFT JOIN questions question ON question.id = request.question_id WHERE run.id = ?`).get(originRunId) as { status: string; feedback: string | null; mode_snapshot: string | null; question_mode: string | null } | undefined;
       if (!run || run.status !== "COMPLETED" || run.feedback !== "GOOD") throw new Error("Origin requires a completed Good run");
-      if (base.kind !== "PERSONAL" || base.profile_id !== LOCAL_PROFILE_ID || run.session_id && run.local_profile_id !== LOCAL_PROFILE_ID) throw new Error("Origin requires the local personal profile");
+      if (base.kind !== "PERSONAL") throw new Error("Origin requires a personal knowledge base");
       const mode = run.mode_snapshot || run.question_mode;
       if (mode !== "INTERVIEWEE" && !(mode === null && legacyLink)) throw new Error("Only INTERVIEWEE runs can enter prepared Q&A");
     }

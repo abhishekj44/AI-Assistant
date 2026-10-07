@@ -251,12 +251,16 @@ function promptContractTest() {
     false,
     profile,
     true,
-    { company: "Example Corp", callType: "giving_interview", details: "Lead AI Engineer - Round 1" },
+    { company: "Example Corp", callType: "giving_interview", details: "Round 1", jobTitle: "AI Engineer", seniority: "Lead", jobDescription: "Build reliable AI pipelines." },
   );
   assert(system.includes("IMMUTABLE CORE QUALITY RULES"), "User style preferences replaced the immutable quality rules");
   assert(system.includes("validation/success criteria"), "Core validation requirement is missing from the system instruction");
   assert(system.includes("Prefer concise bullets"), "Optional user style preferences were not appended");
-  assert(system.includes("senior-engineer/professional depth"), "Giving Interview prompt did not influence answer depth");
+  assert(system.includes("Match depth to the stated seniority when supplied"), "Giving Interview prompt did not calibrate answer depth to seniority");
+  assert(system.includes("Use the job description to understand expected role, skills and seniority."), "Job description role guidance is missing");
+  assert(system.includes("Do not assume every question will relate directly to the job description."), "Job description was not treated as a soft relevance signal");
+  assert(system.includes("Always answer the actual question asked."), "Actual-question priority is missing");
+  assert(system.includes("answer normally using relevant knowledge-base evidence and general knowledge"), "Unrelated-question fallback is missing");
   assert(system.includes("failure diagnosis") && system.includes("trade-off"), "AnswerContract sequence is missing from the system instruction");
 
   const prompt = buildAnswerPromptDetailed({
@@ -276,10 +280,11 @@ function promptContractTest() {
       usedActiveInterim: false,
       primaryAskConfidence: "high",
     },
-    sessionInfo: { company: "Example Corp", callType: "giving_interview", details: "Lead AI Engineer - Round 1" },
+    sessionInfo: { company: "Example Corp", callType: "giving_interview", details: "Round 1", jobTitle: "AI Engineer", seniority: "Lead", jobDescription: "Build reliable AI pipelines." },
     answerProfile: profile,
   });
   assert(prompt.prompt.includes("<SESSION_CONTEXT_DATA>"), "SessionInfo was not injected into the model prompt");
+  assert(prompt.prompt.includes("<JOB_DESCRIPTION_DATA>") && prompt.sessionContextText.includes('"seniority":"Lead"'), "Giving Interview role context was not injected into the model prompt");
   assert(prompt.prompt.includes("<INTERVIEWER_SCENARIO_DATA>"), "Scenario context was not injected into the model prompt");
   assert(prompt.prompt.includes("<CURRENT_INTERVIEWER_ASK confidence=\"high\">"), "Primary ask/confidence was not separated in the model prompt");
   assert(!prompt.recentConversationText.includes("vehicle count is correct"), "Current scenario was duplicated into recent conversation context");

@@ -10,8 +10,8 @@ test("chat API persists failures, ignores browser history and replays completed 
   context.after(() => db.close());
   const chats = new ChatRepository(db);
   const prompts = new PromptRepository(db);
-  const row = prompts.getActive("CHAT");
-  const active = prompts.update({ id: row.id, baseVersion: 1, system_template: "Custom chat", user_template: "{{history}}USER: {{message}}" });
+  const row = prompts.get("CHAT");
+  const active = prompts.update({ key: row.template_key, system_template: "Custom chat", user_template: "{{history}}USER: {{message}}" });
   let calls = 0;
   const api = createChatHandlers({ chats, prompts, context: async () => "", generate: async (prompt) => {
     calls++;
@@ -24,12 +24,14 @@ test("chat API persists failures, ignores browser history and replays completed 
   assert.equal((await api.POST(request())).status, 503);
   assert.equal(chats.getMessages("thread")[0].content, "Hello");
   assert.equal((await api.POST(request())).status, 200);
-  prompts.update({ id: active.id, baseVersion: active.version, system_template: "Changed after generation", user_template: "{{candidateContext}}" });
+  prompts.update({ key: active.template_key, system_template: "Changed after generation", user_template: "{{candidateContext}}" });
   assert.equal((await api.POST(request())).status, 200);
   assert.equal(calls, 2);
   assert.equal(chats.getMessages("thread").length, 2);
-  const stored = db.prepare("SELECT prompt_id FROM model_requests ORDER BY rowid DESC LIMIT 1").get() as { prompt_id: string };
-  assert.equal(stored.prompt_id, active.id);
+  const stored = db.prepare("SELECT prompt_key, rendered_system_text FROM model_requests ORDER BY rowid DESC LIMIT 1").get() as { prompt_key: string; rendered_system_text: string };
+  assert.equal(stored.prompt_key, active.template_key);
+  assert.ok(stored.rendered_system_text.includes("Custom chat"));
+  assert.ok(!stored.rendered_system_text.includes("Changed after generation"));
   const page = await (await api.GET(new Request("http://localhost/api/chat?threadId=thread&limit=1"))).json();
   assert.equal(page.messages[0].role, "ASSISTANT");
   assert.equal((await api.DELETE(new Request("http://localhost/api/chat?threadId=thread", { method: "DELETE" }))).status, 200);
@@ -61,10 +63,10 @@ test("chat run claims prevent duplicate generation and retain failed input", (co
   const db = openDatabase(":memory:");
   context.after(() => db.close());
   const repo = new ChatRepository(db);
-  const prompt = new PromptRepository(db).getActive("CHAT");
+  const prompt = new PromptRepository(db).get("CHAT");
   repo.createThread({ id: "thread" });
   repo.append({ id: "user", threadId: "thread", role: "USER", content: "Question" });
-  const request = { purpose: "CHAT" as const, prompt: "Question", promptId: prompt.id };
+  const request = { purpose: "CHAT" as const, prompt: "Question", promptKey: prompt.template_key };
   const first = repo.claimRun("user", request);
   assert.equal(first.claimed, true);
   assert.equal(repo.claimRun("user", request).claimed, false);

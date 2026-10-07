@@ -11,7 +11,7 @@ import { KnowledgeRepository } from "../lib/server/repositories/knowledgeReposit
 import { EMPTY_KNOWLEDGE_PACK } from "../lib/knowledge/types";
 
 const now = "2024-01-02T03:04:05.000Z";
-test("legacy files import without caps, jobs or loss and repeat without overwrites", context => {
+test("legacy files import without caps, summaries or loss and repeat without overwrites", context => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-import-"));
   const database = new Database(":memory:");
   database.pragma("foreign_keys=ON");
@@ -28,7 +28,7 @@ test("legacy files import without caps, jobs or loss and repeat without overwrit
   const report = migrateLegacyData(database, root);
   assert.deepEqual(report.sources.map(source => source.status), ["COMPLETE", "COMPLETE", "COMPLETE", "COMPLETE"]);
   assert.equal((database.prepare("SELECT count(*) AS count FROM model_runs").get() as { count: number }).count, 160);
-  assert.equal((database.prepare("SELECT count(*) AS count FROM background_jobs").get() as { count: number }).count, 0);
+  assert.equal((database.prepare("SELECT count(*) AS count FROM sessions WHERE summary_status = 'PENDING'").get() as { count: number }).count, 0);
   const turn = database.prepare("SELECT * FROM transcript_turns WHERE sequence_no=1").get() as { text: string; client_turn_id: string; metadata_json: string; speaker: string };
   assert.equal(turn.text, " turn 0 "); assert.equal(turn.speaker, "REMOTE"); assert.match(turn.client_turn_id, /^legacy-/);
   assert.equal(JSON.parse(turn.metadata_json).legacy.speaker, "interviewer");

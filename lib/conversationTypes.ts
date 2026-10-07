@@ -36,7 +36,9 @@ export interface SessionInfo {
   company: string;
   callType: CallType;
   details: string;
+  jobTitle?: string;
   jobDescription?: string;
+  seniority?: string;
   candidateProfile?: string;
   modeVariant?: "standard" | "course_admission";
   knowledgeBaseIds?: string[];

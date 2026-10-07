@@ -25,21 +25,21 @@ test("maintenance API backs up WAL safely, exports, and refuses live restore or 
     if (previousPath === undefined) delete process.env.COPILOT_DB_PATH; else process.env.COPILOT_DB_PATH = previousPath;
     connections.delete(filename); database.close(); fs.rmSync(root, { recursive: true, force: true });
   });
-  database.prepare("UPDATE profiles SET display_name=?").run("Private profile");
+  database.prepare("UPDATE knowledge_bases SET name=?").run("Private base");
   const repository = new MaintenanceRepository(database, root);
   const handlers = { GET, POST };
   const post = (body: unknown) => handlers.POST(new Request("http://localhost/api/database", { method: "POST", body: JSON.stringify(body) }));
   const stats = await (await handlers.GET(new Request("http://localhost/api/database"))).json();
-  assert.equal(stats.healthy, true); assert.equal(stats.counts.profiles, 1); assert.ok(stats.storage.walBytes > 0);
-  assert.ok(!JSON.stringify(stats).includes("Private profile"));
+  assert.equal(stats.healthy, true); assert.equal(stats.counts.knowledge_bases, 1); assert.ok(stats.storage.walBytes > 0);
+  assert.ok(!JSON.stringify(stats).includes("Private base"));
   const response = await post({ action: "backup" }); assert.equal(response.status, 200);
   const backup = await response.json();
   const copied = new Database(path.join(root, "data", "backups", backup.id), { readonly: true });
-  try { assert.equal((copied.prepare("SELECT display_name FROM profiles").get() as { display_name: string }).display_name, "Private profile"); } finally { copied.close(); }
-  database.prepare("UPDATE profiles SET display_name='New live value'").run();
+  try { assert.equal((copied.prepare("SELECT name FROM knowledge_bases").get() as { name: string }).name, "Private base"); } finally { copied.close(); }
+  database.prepare("UPDATE knowledge_bases SET name='New live value'").run();
   const restore = await post({ action: "restore", id: backup.id });
   assert.equal(restore.status, 409); assert.equal((await restore.json()).requiresRestart, true);
-  assert.equal((database.prepare("SELECT display_name FROM profiles").get() as { display_name: string }).display_name, "New live value");
+  assert.equal((database.prepare("SELECT name FROM knowledge_bases").get() as { name: string }).name, "New live value");
   const exported = await handlers.GET(new Request(`http://localhost/api/database?backup=${backup.id}`));
   assert.equal(exported.status, 200); assert.equal(Buffer.from(await exported.arrayBuffer()).subarray(0, 15).toString(), "SQLite format 3");
   assert.equal((await post({ action: "restore", id: "../../test.db" })).status, 400);

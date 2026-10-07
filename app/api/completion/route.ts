@@ -53,7 +53,7 @@ interface PreGenerationMetrics {
   retrievalMs?: number;
   retrievalEngine?: string;
   retrievalItems?: number;
-  promptVersion?: number;
+  promptCustomized?: boolean;
   requestParseMs?: number;
   sanitizeMs?: number;
   questionDeriveMs?: number;
@@ -146,17 +146,19 @@ function sanitizeSessionInfo(value: unknown): SessionInfo | undefined {
   const raw = value as Record<string, unknown>;
   const callType = normalizeCallType(raw.callType);
   const company = typeof raw.company === "string" ? raw.company.trim().slice(0, 160) : "";
-  const details = typeof raw.details === "string" ? raw.details.trim().slice(0, 500) : "";
+  const details = typeof raw.details === "string" ? raw.details.trim().slice(0, callType === "giving_interview" ? 1_000 : 500) : "";
   const knowledgeBaseIds = callType === "giving_interview" ? [DEFAULT_KNOWLEDGE_BASE_ID]
     : callType === "taking_interview" ? [] : Array.isArray(raw.knowledgeBaseIds)
       ? raw.knowledgeBaseIds.filter((id): id is string => typeof id === "string" && id.length <= 160).slice(0, 20) : undefined;
-  const contextText = (value: unknown) => {
+  const contextText = (value: unknown, maxLength = 12_000, label = "Interview context") => {
     if (value === undefined) return undefined;
-    if (typeof value !== "string" || value.length > 12_000) throw new SessionPersistenceError("Interview context must be text of at most 12000 characters", 400);
+    if (typeof value !== "string" || value.length > maxLength) throw new SessionPersistenceError(`${label} must be text of at most ${maxLength} characters`, 400);
     return value.trim();
   };
   return { company, callType, details, modeVariant: raw.modeVariant === "course_admission" ? "course_admission" : "standard", knowledgeBaseIds,
+    jobTitle: callType === "giving_interview" ? contextText(raw.jobTitle, 200, "Job title") : undefined,
     jobDescription: callType === "giving_interview" ? contextText(raw.jobDescription) : undefined,
+    seniority: callType === "giving_interview" ? contextText(raw.seniority, 100, "Seniority") : undefined,
     candidateProfile: callType === "taking_interview" ? contextText(raw.candidateProfile) : undefined };
 }
 
@@ -281,8 +283,8 @@ export async function POST(request: Request) {
       const prompt = [rendered.prompt, interviewContextBlock(sessionInfo)].filter(Boolean).join("\n\n");
       const summarizerSystemInstruction = rendered.systemInstruction;
       const persistence = new CompletionPersistence({ id: requestId, sessionId, purpose: "SUMMARY", mode,
-        variant: sessionInfo?.modeVariant, promptId: rendered.promptId, systemInstruction: summarizerSystemInstruction,
-        prompt, context: { recentTurns, sessionInfo, promptVersion: rendered.promptVersion } });
+        variant: sessionInfo?.modeVariant, promptKey: rendered.promptKey, systemInstruction: summarizerSystemInstruction,
+        prompt, context: { recentTurns, sessionInfo, promptCustomized: rendered.promptCustomized } });
       const promptBuildMs = Math.round(performance.now() - promptStarted);
       return streamToClient({
         requestId,
@@ -379,7 +381,9 @@ export async function POST(request: Request) {
     const runtimePrompt = getRuntimeCallPrompt(sessionInfo);
     const values = { question, background: callType !== "taking_interview" && typeof body.bg === "string" ? body.bg : "", memory: JSON.stringify(memory),
       sessionContext: JSON.stringify(sessionInfo || {}), transcript: recentTurns.map((turn) => `${turn.speaker}: ${turn.text}`).join("\n"),
-      candidateContext: candidateSelection.context, jobDescription: sessionInfo?.jobDescription || "", candidateProfile: sessionInfo?.candidateProfile || "" };
+      candidateContext: candidateSelection.context, jobTitle: sessionInfo?.jobTitle || "", company: sessionInfo?.company || "",
+      jobDescription: sessionInfo?.jobDescription || "", seniority: sessionInfo?.seniority || "", additionalContext: sessionInfo?.details || "",
+      candidateProfile: sessionInfo?.candidateProfile || "" };
     const runtimeTemplate = { ...runtimePrompt.template,
       assistantIdentity: renderLiteralPlaceholders(runtimePrompt.template.assistantIdentity, values),
       modeRules: renderLiteralPlaceholders(runtimePrompt.template.modeRules, values),
@@ -413,7 +417,7 @@ export async function POST(request: Request) {
 
     const contextSnapshot: CompletionContextSnapshot = {
       requestId,
-      promptVersion: runtimePrompt.promptVersion,
+      promptCustomized: runtimePrompt.promptCustomized,
       retrieval: { engine: retrieved.meta.engine, elapsedMs: retrieved.meta.elapsedMs,
         items: retrieved.meta.items.map((item) => ({ id: item.id, sourceKind: item.sourceKind, rank: item.rank, provenance: item.provenance })) },
       createdAt: new Date().toISOString(),
@@ -484,7 +488,7 @@ export async function POST(request: Request) {
       contextSnapshot,
       signal: request.signal,
       persistence: new CompletionPersistence({ id: requestId, sessionId, purpose: "ANSWER", mode,
-        variant: sessionInfo?.modeVariant, promptId: runtimePrompt.promptId, systemInstruction, prompt: promptParts.prompt,
+        variant: sessionInfo?.modeVariant, promptKey: runtimePrompt.promptKey, systemInstruction, prompt: promptParts.prompt,
         context: contextSnapshot }, { question, bundle: questionBundle }),
       preGenerationMetrics: {
         requestParseMs,
@@ -493,7 +497,7 @@ export async function POST(request: Request) {
         retrievalMs: Math.round(retrieved.meta.elapsedMs),
         retrievalEngine: retrieved.meta.engine,
         retrievalItems: retrieved.meta.items.length,
-        promptVersion: runtimePrompt.promptVersion,
+        promptCustomized: runtimePrompt.promptCustomized,
         knowledgeReadMs: Math.round(retrieved.meta.elapsedMs),
         webMs: web.elapsedMs,
         selectorMs,

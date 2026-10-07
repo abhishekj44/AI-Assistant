@@ -245,7 +245,7 @@ function MetricsTab({ metrics }: { metrics: CompletionMetrics | null }) {
         <Metric label="Retrieval" value={formatMs(metrics.retrievalMs)} />
         <Metric label="Search engine" value={metrics.retrievalEngine || "-"} />
         <Metric label="Retrieved items" value={metrics.retrievalItems?.toString() || "0"} />
-        <Metric label="Prompt version" value={metrics.promptVersion?.toString() || "-"} />
+        <Metric label="Prompt template" value={metrics.promptCustomized === undefined ? "-" : metrics.promptCustomized ? "customized" : "default"} />
         <Metric label="Model connect" value={formatMs(metrics.modelConnectMs)} />
         <Metric label="First chunk wait" value={formatMs(metrics.firstChunkDelayMs)} />
         <Metric label="Model wait" value={formatMs(metrics.modelWaitMs)} />

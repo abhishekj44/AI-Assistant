@@ -263,7 +263,7 @@ export function migrateLegacyData(database: Database.Database, root: string): Le
       result.error = error instanceof Error ? error.message : "Legacy import failed";
     }
   }
-  database.prepare("INSERT INTO app_settings(key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at,revision=app_settings.revision+1")
+  database.prepare("INSERT INTO app_settings(key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
     .run(LEGACY_IMPORT_STATUS_KEY, JSON.stringify(report), report.checkedAt);
   return report;
 }

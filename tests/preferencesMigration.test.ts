@@ -14,7 +14,7 @@ test("failed migration leaves browser keys intact and defaults wait for hydratio
     const body = JSON.parse(String(options.body));
     posts++;
     if (posts === 1) return Response.json({ error: "Offline" }, { status: 503 });
-    for (const [key, value] of Object.entries(body.patch)) saved.push({ key, value, revision: 1 });
+    for (const [key, value] of Object.entries(body.patch)) saved.push({ key, value });
     return Response.json({ committed: true, settings: saved });
   });
   const { setSetting } = await import("../lib/clientSettings");

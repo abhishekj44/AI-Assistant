@@ -11,9 +11,8 @@ function modeFor(info?: RuntimeInfo | null): PromptMode {
   const callType = normalizeCallType(info?.callType);
   return callType === "taking_interview" ? "INTERVIEWER" : callType === "meeting" ? "MEETING" : "INTERVIEWEE";
 }
-export function resolveActivePrompt(purpose: PromptPurpose, info?: RuntimeInfo | null, repository: PromptRepository = promptRepository): PromptRow {
-  const row = repository.getActive(purpose, purpose === "CHAT" || purpose === "EXTRACTION" ? null : modeFor(info), purpose !== "CHAT" && purpose !== "EXTRACTION" && info?.callType === "taking_interview" && info.modeVariant === "course_admission" ? "course_admission" : "standard");
-  return purpose === "MEMORY" && row.id.startsWith("seed:") ? { ...row, user_template: row.user_template.replace('"{{previousMemory}}"', "{{previousMemory}}").replace('"{{recentTurns}}"', "{{recentTurns}}") } : row;
+export function resolvePrompt(purpose: PromptPurpose, info?: RuntimeInfo | null, repository: PromptRepository = promptRepository): PromptRow {
+  return repository.get(purpose, purpose === "CHAT" || purpose === "EXTRACTION" ? null : modeFor(info), purpose !== "CHAT" && purpose !== "EXTRACTION" && info?.callType === "taking_interview" && info.modeVariant === "course_admission" ? "course_admission" : "standard");
 }
 export function renderLiteralPlaceholders(template: string, values: Record<string, string> = {}): string {
   return template.replace(/\{\{([^{}]+)\}\}/g, (_match, key: string) => {
@@ -27,16 +26,16 @@ function protectedRules(purpose: PromptPurpose, info?: RuntimeInfo | null): stri
   const source = purpose === "MEMORY" ? getMemorySystemPrompt(callType) : purpose === "SUMMARY" ? getSummarizerSystemPrompt(callType) : purpose === "EXTRACTION" ? KNOWLEDGE_EXTRACTION_SYSTEM_PROMPT : purpose === "ANSWER" ? `${CORE_QUALITY_RULES}\n\n${getCallPromptTemplate(info).confidencePolicy}` : "";
   return [FACT_RULES, source].filter(Boolean).join("\n\n");
 }
-export function renderRuntimePrompt(purpose: PromptPurpose, info?: RuntimeInfo | null, values: Record<string, string> = {}, repository: PromptRepository = promptRepository): { promptId: string; promptVersion: number; mode: PromptMode | null; variant: string; systemInstruction: string; prompt: string } {
-  const row = resolveActivePrompt(purpose, info, repository);
-  return { promptId: row.id, promptVersion: row.version, mode: row.mode, variant: row.variant, systemInstruction: [renderLiteralPlaceholders(row.system_template, values), protectedRules(purpose, info)].join("\n\n"), prompt: renderLiteralPlaceholders(row.user_template, values) };
+export function renderRuntimePrompt(purpose: PromptPurpose, info?: RuntimeInfo | null, values: Record<string, string> = {}, repository: PromptRepository = promptRepository): { promptKey: string; promptCustomized: boolean; mode: PromptMode | null; variant: string; systemInstruction: string; prompt: string } {
+  const row = resolvePrompt(purpose, info, repository);
+  return { promptKey: row.template_key, promptCustomized: row.customized, mode: row.mode, variant: row.variant, systemInstruction: [renderLiteralPlaceholders(row.system_template, values), protectedRules(purpose, info)].join("\n\n"), prompt: renderLiteralPlaceholders(row.user_template, values) };
 }
-export function getRuntimeCallPrompt(info?: RuntimeInfo | null, repository: PromptRepository = promptRepository): { template: CallPromptTemplate; promptId: string; promptVersion: number } {
+export function getRuntimeCallPrompt(info?: RuntimeInfo | null, repository: PromptRepository = promptRepository): { template: CallPromptTemplate; promptKey: string; promptCustomized: boolean } {
   const base = getCallPromptTemplate(info);
-  const row = resolveActivePrompt("ANSWER", info, repository);
-  return { template: { ...base, ...row.parameters, confidencePolicy: base.confidencePolicy, assistantIdentity: `${row.system_template}\n\n${protectedRules("ANSWER", info)}`, finalOutputInstruction: row.user_template } as CallPromptTemplate, promptId: row.id, promptVersion: row.version };
+  const row = resolvePrompt("ANSWER", info, repository);
+  return { template: { ...base, ...row.parameters, confidencePolicy: base.confidencePolicy, assistantIdentity: `${row.system_template}\n\n${protectedRules("ANSWER", info)}`, finalOutputInstruction: row.user_template } as CallPromptTemplate, promptKey: row.template_key, promptCustomized: row.customized };
 }
-export function getRuntimeInstruction(purpose: Exclude<PromptPurpose, "ANSWER">, info?: RuntimeInfo | null, repository: PromptRepository = promptRepository): { systemInstruction: string; promptId: string; promptVersion: number; userTemplate?: string } {
-  const row = resolveActivePrompt(purpose, info, repository);
-  return { systemInstruction: `${row.system_template}\n\n${protectedRules(purpose, info)}`, promptId: row.id, promptVersion: row.version, userTemplate: row.user_template || undefined };
+export function getRuntimeInstruction(purpose: Exclude<PromptPurpose, "ANSWER">, info?: RuntimeInfo | null, repository: PromptRepository = promptRepository): { systemInstruction: string; promptKey: string; promptCustomized: boolean; userTemplate?: string } {
+  const row = resolvePrompt(purpose, info, repository);
+  return { systemInstruction: `${row.system_template}\n\n${protectedRules(purpose, info)}`, promptKey: row.template_key, promptCustomized: row.customized, userTemplate: row.user_template || undefined };
 }

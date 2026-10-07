@@ -146,7 +146,7 @@ async function callExtractor(documentText: string, documentType: KnowledgeDocume
   const model = process.env.KNOWLEDGE_EXTRACTION_MODEL || "gemini-3.5-flash-lite";
   const rendered = renderRuntimePrompt("EXTRACTION", undefined, { documentType, documentText: documentText.slice(0, MAX_DOCUMENT_CHARS) }, options.promptRepository ?? promptRepository);
   const runs = options.modelRunRepository ?? new ModelRunRepository();
-  const requestId = runs.createRequest({ ...rendered, mode: rendered.mode ?? undefined, purpose: "EXTRACTION", context: { documentType, promptVersion: rendered.promptVersion } });
+  const requestId = runs.createRequest({ ...rendered, mode: rendered.mode ?? undefined, purpose: "EXTRACTION", context: { documentType, promptCustomized: rendered.promptCustomized } });
   const runId = runs.start({ requestId, provider: "gemini", model, tag: "Knowledge Extraction" });
   let output = "";
   try {

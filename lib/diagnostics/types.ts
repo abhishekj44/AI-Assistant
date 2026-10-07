@@ -1,5 +1,5 @@
 export interface CompletionMetrics {
-  runId?: string; retrievalMs?: number; retrievalEngine?: string; retrievalItems?: number; promptVersion?: number;
+  runId?: string; retrievalMs?: number; retrievalEngine?: string; retrievalItems?: number; promptCustomized?: boolean;
   provider?: string; model?: string; clientTtftMs?: number; clientResponseHeadersMs?: number; clientFirstSseMs?: number; clientTotalMs?: number;
   serverTtftMs?: number | null; firstChunkServerMs?: number | null; preModelMs?: number; modelConnectMs?: number; firstChunkDelayMs?: number | null; modelWaitMs?: number;
   generationMs?: number; tokensPerSecond?: number | null; totalMs?: number; requestParseMs?: number; sanitizeMs?: number; questionDeriveMs?: number;
@@ -17,7 +17,7 @@ export interface QAMatchSnapshot {
 }
 
 export interface CompletionContextSnapshot {
-  promptVersion?: number;
+  promptCustomized?: boolean;
   retrieval?: { engine: string; elapsedMs: number; items: Array<{ id: string; sourceKind: string; rank: number; provenance: unknown }> };
   requestId: string;
   createdAt: string;

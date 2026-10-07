@@ -6,12 +6,12 @@ An assistant for interviews and meetings. It turns live audio into text and sugg
 
 - **One local database:** sessions, transcripts, summaries, knowledge, Q&A, answers, prompts, chat and settings now use SQLite instead of separate JSON files.
 - **Fast local search:** SQLite FTS5 finds relevant knowledge by words, phrases and technical terms. No Pinecone account or separate vector database is needed.
-- **One saved resume:** Giving Interview automatically uses your resume from the default Candidate Knowledge base. You enter the job description for that interview.
+- **One saved resume:** Giving Interview automatically uses your resume from the default Candidate Knowledge base. You enter the job title, optional company, job description, seniority and additional context for that interview.
 - **Candidate-specific setup:** Taking Interview asks for a fresh candidate profile and uses the candidate's responses together with your questions and both speakers' conversation. Shared audio and your microphone are required; your own resume and personal Q&A are excluded.
 - **Per-session interview context:** job descriptions and candidate profiles are saved with the relevant session and included in answers, rolling memory and summaries, not reused as global preferences.
 - **Separate reference bases:** additional knowledge bases remain available for meeting/reference material; interview setup no longer asks you to choose a resume.
-- **Continuous saving:** finalized speech is saved during the call. Summaries are generated afterwards without delaying transcript saving.
-- **Editable prompts:** each call type has its own prompt. Saving an edit creates a new version.
+- **Continuous saving:** finalized speech is saved during the call. When a session ends, one summary is generated afterwards without delaying transcript saving; if it fails, use **Retry summary** in Local Data.
+- **Editable prompts:** each call type has its own prompt. Saving replaces that prompt, and **Reset to Default** restores the built-in text.
 - **Safer history:** completed and interrupted answers are kept separate. Generated answers become prepared Q&A only after you approve and promote them.
 - **Local data tools:** view old sessions, download backups and rebuild the search index from **Knowledge & Q&A > Local Data**.
 
@@ -217,17 +217,19 @@ Original PDFs cannot be recovered from old JSON that only contains extracted fac
 ## Use The App
 
 1. For Giving Interview, upload or import your resume once into the default **Candidate Knowledge** base under **Knowledge & Q&A**. Keep your prepared personal Q&A there too. Uploading a revised resume there replaces the previous resume document even if the filename changes, without clearing project notes or prepared Q&A.
-2. Open **Prompt > Templates** to edit a call-type prompt, or use **Style Preferences** for tone and answer format.
-3. Click **Connect Audio** and choose the mode. For **Giving Interview**, paste the job description; the saved resume is used automatically. For **Taking Interview**, enter this candidate's profile. **Meeting** still lets you choose reference knowledge bases.
+2. Open **Prompt > Templates** to edit a call-type prompt (**Save Template**; **Reset to Default** restores the built-in text), or use **Style Preferences** for tone and answer format.
+3. Click **Connect Audio** and choose the mode. For **Giving Interview**, enter the job title, optional company, job description, seniority and additional context; the saved resume is used automatically. For **Taking Interview**, enter this candidate's profile. **Meeting** still lets you choose reference knowledge bases.
 4. Enable **Share audio** in the browser picker. **Taking Interview requires microphone permission** to include your questions alongside the candidate's responses; setup stops if either required stream cannot start. Microphone capture remains optional for other modes.
 5. Click **Generate Response** or press `Ctrl+Enter` when the remote participant finishes.
-6. Disconnect when finished. View the saved transcript and summary under **Local Data**. A summary can remain pending or fail if the AI provider is unavailable; the saved transcript remains intact.
+6. Disconnect when finished. The session summary is generated once in the background. View the saved transcript and summary under **Local Data**, where the Summary column shows `pending`, `ready` or `failed`. If it failed (for example the AI provider was unavailable or the app stopped first), hover the status to see why and click **Retry summary**. The saved transcript remains intact either way. A session that gained turns after its summary shows **Update summary**.
 
 ### Giving Interview
 
 - Save your resume in the default **Candidate Knowledge** base once. There is no resume selector in interview setup.
+- Setup accepts **Job title** (up to 200 characters), **Company (optional)**, **Job description**, **Seniority**, and **Additional context** (up to 1,000 characters). Job title, seniority and additional context may be left blank; only the job description is required.
 - Enter the **job description** for the current opportunity: role, responsibilities, required skills and experience. This field is required and accepts up to **12,000 characters**.
-- Answers use your saved resume, prepared personal Q&A, job description and captured conversation. Job requirements are not treated as experience you already have.
+- The job description is a **soft relevance signal**, not a constraint. Questions related to it receive strongly tailored answers; unrelated questions are answered normally using relevant knowledge-base evidence and general knowledge, without forcing a connection to the target role. The assistant always answers the actual question asked.
+- Answers use your saved resume, prepared personal Q&A, role context and captured conversation. Seniority calibrates answer depth. Job requirements are not treated as experience you already have.
 - Your microphone is optional. Enable it before connecting to include your answers in follow-up context.
 
 ### Taking Interview
@@ -246,11 +248,13 @@ Select **1 to 20 knowledge bases** for reference material. The assistant suggest
 
 Job descriptions and candidate profiles are stored with their sessions and included in rolling memory and summaries. They are not global settings and are not added to your personal resume knowledge. New setup starts with empty interview inputs; cancelling or switching modes clears them. Existing sessions without these fields can still be viewed; start a new interview with the required context before generating answers.
 
+Job title, seniority and additional context also belong to the Giving Interview session and are included in its answers and prompt preview. Existing SQLite databases gain the new role fields through an additive migration; their sessions, transcripts and summaries are preserved.
+
 For longer calls, answer generation uses recent turns and rolling memory rather than sending the entire transcript on every request. SQLite retains the full finalized transcript. Session context is included in database backups, so keep backups private.
 
 In **Session Details**, `Ctrl+Enter` submits setup after the required fields are filled and `Esc` cancels. During a call, `Ctrl+Enter` generates a response.
 
-**Diagnostics** shows the selected context, search time, prompt version and response timing. Search uses local keyword matching, not semantic/vector search, so adding alternate question wording can improve matches.
+**Diagnostics** shows the selected context, search time, whether the prompt is the default or customized, and response timing. Search uses local keyword matching, not semantic/vector search, so adding alternate question wording can improve matches.
 
 ## Back Up And Move To Another Device
 
@@ -284,6 +288,8 @@ Keep the database and backups private, on local disk rather than a network drive
 | Imported JSON is missing | Check filenames, JSON format and **Local Data** warnings. Restart after placing files; keep the originals. |
 | Import says existing data or source changed | Automatic import will not overwrite it. Use the correct base's UI import for knowledge/Q&A; reconcile session/history conflicts without deleting the database. |
 | Search results look stale | Use **Local Data > Rebuild Search Index**. |
+| A session summary shows `failed` | Click **Retry summary** next to the session in **Local Data**. Hover the status to see the reason, such as a missing API key. |
+| The app stops at startup saying a migration checksum does not match | The database was created by an earlier pre-release schema and cannot be upgraded in place. Stop the app, move `data/copilot.db`, `data/copilot.db-wal` and `data/copilot.db-shm` into another folder together, then restart to start fresh. Import old JSON files again if needed, or restore a backup made by this version. |
 | Transcript saving reports an error | Use **Retry Save** in the audio panel and check disk space. Do not clear browser storage while saves are pending. |
 | Port 3000 is busy | Use `--port 3001` in the start command and open the matching address. Existing SQLite data still loads, but legacy browser storage belongs to its original address. |
 

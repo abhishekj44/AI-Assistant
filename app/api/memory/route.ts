@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     const systemInstruction = `${rendered.systemInstruction}\n\nCODE-OWNED OUTPUT CONTRACT: Return valid JSON only with this shape:\n{"summary":"...","currentTopic":"...","facts":[],"decisions":[],"openQuestions":[],"entities":[]}`;
     const sessionId = typeof body?.sessionId === "string" && dependencies.sessions.get(body.sessionId, false) ? body.sessionId : undefined;
     runs = dependencies.runs;
-    const requestId = runs.createRequest({ ...rendered, prompt, systemInstruction, mode: rendered.mode ?? undefined, sessionId, purpose: "MEMORY", context: { previousMemory: previous, sessionInfo: body.sessionInfo, recentTurns: safeTurns, promptVersion: rendered.promptVersion } });
+    const requestId = runs.createRequest({ ...rendered, prompt, systemInstruction, mode: rendered.mode ?? undefined, sessionId, purpose: "MEMORY", context: { previousMemory: previous, sessionInfo: body.sessionInfo, recentTurns: safeTurns, promptCustomized: rendered.promptCustomized } });
     const model = process.env.MEMORY_MODEL || "gemini-3.5-flash-lite";
     runId = runs.start({ requestId, provider: "gemini", model, tag: "Rolling Memory" });
     request.signal.throwIfAborted();

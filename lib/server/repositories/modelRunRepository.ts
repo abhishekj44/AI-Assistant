@@ -1,6 +1,4 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import type Database from "better-sqlite3";
 import { getDatabase } from "../db/connection";
 import type { SessionMode } from "./questionRepository";
@@ -12,7 +10,7 @@ export interface ModelRequestInput {
   id?: string;
   sessionId?: string;
   questionId?: string;
-  promptId?: string;
+  promptKey?: string;
   purpose: "ANSWER" | "SUMMARY" | "MEMORY" | "EXTRACTION" | "CHAT" | "LEGACY_IMPORT";
   mode?: SessionMode;
   variant?: string;
@@ -75,13 +73,6 @@ const SELECT_RUN = `SELECT model_runs.*, questions.primary_ask, questions.scenar
 export class ModelRunRepository {
   constructor(private readonly database: Database.Database = getDatabase()) {}
 
-  importLegacyHistory(filename = path.join(process.cwd(), "data", "qa-history.json")): number {
-    if (!fs.existsSync(filename)) return 0;
-    const entries: unknown = JSON.parse(fs.readFileSync(filename, "utf8"));
-    if (!Array.isArray(entries)) throw new Error("Legacy answer history must be an array");
-    return this.importHistory(entries);
-  }
-
   importHistory(entries: unknown[]): number {
     return this.database.transaction(() => {
       let imported = 0;
@@ -134,10 +125,10 @@ export class ModelRunRepository {
   createRequest(input: ModelRequestInput): string {
     const id = input.id || crypto.randomUUID();
     this.database.prepare(`INSERT INTO model_requests
-      (id, session_id, question_id, prompt_id, purpose, mode_snapshot, variant_snapshot,
+      (id, session_id, question_id, prompt_key, purpose, mode_snapshot, variant_snapshot,
        rendered_system_text, rendered_user_text, context_snapshot_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, input.sessionId || null, input.questionId || null, input.promptId || null,
+      .run(id, input.sessionId || null, input.questionId || null, input.promptKey || null,
         input.purpose, input.mode || null, input.variant || "standard", input.systemInstruction || "",
         input.prompt, JSON.stringify(input.context ?? {}), input.createdAt || new Date().toISOString());
     return id;

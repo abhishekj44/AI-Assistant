@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { DEFAULT_PROMPT_RULES, buildPrompt, PROMPT_STYLE_STORAGE_KEY, PROMPT_RULES_VERSION, PROMPT_RULES_VERSION_STORAGE_KEY } from "@/lib/utils";
 import type { SessionInfo, SpeakerRole } from "@/lib/conversationTypes";
 import { CORE_QUALITY_RULES, getCallPromptTemplate, type CallPromptTemplate } from "@/lib/prompts";
+import { buildAnswerSystemInstruction } from "@/lib/promptBuilder";
 import { hydrateSettings, getSetting, setSettings } from "@/lib/clientSettings";
 import type { PromptRow, PromptPurpose } from "@/lib/server/repositories/promptRepository";
 import {
@@ -137,10 +138,11 @@ export function PromptModal({
 
   const saveTemplate = async (reset = false) => {
     if (!template) return;
+    if (reset && !window.confirm("Reset this prompt to its default? Your edits to it will be lost.")) return;
     setSaving(true);
     setError("");
     try {
-      const response = await fetch("/api/prompts", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: template.template_key, baseVersion: template.version, purpose: template.purpose, mode: template.mode, variant: template.variant, system_template: systemDraft, user_template: userDraft, parameters: template.purpose === "ANSWER" ? { ...template.parameters, modeRules } : template.parameters, reset }) });
+      const response = await fetch("/api/prompts", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: template.template_key, purpose: template.purpose, mode: template.mode, variant: template.variant, system_template: systemDraft, user_template: userDraft, parameters: template.purpose === "ANSWER" ? { ...template.parameters, modeRules } : template.parameters, reset }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Template save failed");
       setTemplate(data.template);
@@ -174,8 +176,8 @@ export function PromptModal({
 
   const promptProfile = callTemplate ? { ...getCallPromptTemplate(sessionInfo), ...callTemplate.parameters, assistantIdentity: callTemplate.system_template, finalOutputInstruction: callTemplate.user_template } as CallPromptTemplate : getCallPromptTemplate(sessionInfo);
   const interviewContext = sessionInfo?.callType === "taking_interview" ? `Candidate profile:\n${sessionInfo.candidateProfile || "(none)"}`
-    : sessionInfo?.callType === "giving_interview" ? `Job description:\n${sessionInfo.jobDescription || "(none)"}` : "";
-  const livePromptPreview = callTemplate ? `${promptProfile.assistantIdentity}\n\nCore quality rules:\n${CORE_QUALITY_RULES}\n\nMode rules (${promptProfile.displayName}):\n${promptProfile.modeRules}\n\nConfidence policy:\n${promptProfile.confidencePolicy}\n\nOptional style preferences:\n${localRules}\n\nPersonal/candidate notes:\n${sessionInfo?.callType === "taking_interview" ? "(not used in interviewer mode)" : localBg || "(none)"}\n\n${interviewContext}\n\nMemory:\n${currentSummary || "(none)"}\n\nRecent conversation:\n${sampleTurns.map((turn) => `${turn.speaker.toUpperCase()}: ${turn.text}`).join("\n")}\n\n${promptProfile.contextLabel}:\n<reconstructed remote context>\n\n${promptProfile.finalOutputInstruction}` : fallbackPreview;
+    : sessionInfo?.callType === "giving_interview" ? `Job title: ${sessionInfo.jobTitle || "(none)"}\nCompany: ${sessionInfo.company || "(none)"}\nJob description:\n${sessionInfo.jobDescription || "(none)"}\nSeniority: ${sessionInfo.seniority || "(not specified)"}\nAdditional context:\n${sessionInfo.details || "(none)"}` : "";
+  const livePromptPreview = callTemplate ? `${buildAnswerSystemInstruction(localRules, false, undefined, false, sessionInfo, promptProfile)}\n\nPersonal/candidate notes:\n${sessionInfo?.callType === "taking_interview" ? "(not used in interviewer mode)" : localBg || "(none)"}\n\n${interviewContext}\n\nMemory:\n${currentSummary || "(none)"}\n\nRecent conversation:\n${sampleTurns.map((turn) => `${turn.speaker.toUpperCase()}: ${turn.text}`).join("\n")}\n\n${promptProfile.contextLabel}:\n<reconstructed remote context>\n\n${promptProfile.finalOutputInstruction}` : fallbackPreview;
 
   return (
     <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
@@ -254,8 +256,8 @@ export function PromptModal({
             <div className="flex flex-wrap gap-2">
               <select aria-label="Prompt purpose" value={purpose} onChange={(event) => setPurpose(event.target.value as PromptPurpose)} disabled={saving} className="bg-slate-900 border border-slate-700 rounded px-2 py-1">{["ANSWER", "SUMMARY", "MEMORY", "EXTRACTION", "CHAT"].map((value) => <option key={value}>{value}</option>)}</select>
               {purpose !== "CHAT" && purpose !== "EXTRACTION" && <select aria-label="Prompt mode and variant" value={profile} onChange={(event) => setProfile(event.target.value)} disabled={saving} className="bg-slate-900 border border-slate-700 rounded px-2 py-1"><option value="INTERVIEWEE:standard">Giving Interview</option><option value="INTERVIEWER:standard">Taking Interview</option><option value="INTERVIEWER:course_admission">Course Admission</option><option value="MEETING:standard">Meeting</option></select>}
-              {template && <span className="text-slate-400">Version {template.version} / {template.variant}</span>}
-              <button type="button" title="Reload active template" aria-label="Reload active template" disabled={saving} onClick={() => { setError(""); setTemplateReload((version) => version + 1); }}><RotateCcw className="h-3.5 w-3.5" /></button>
+              {template && <span className="text-slate-400">{template.variant} · {template.customized ? "customized" : "default"}</span>}
+              <button type="button" title="Reload template" aria-label="Reload template" disabled={saving} onClick={() => { setError(""); setTemplateReload((version) => version + 1); }}><RotateCcw className="h-3.5 w-3.5" /></button>
             </div>
             {!template ? <p role="status">Loading template...</p> : <>
               <Label htmlFor="template-system">System Template</Label>
@@ -263,7 +265,7 @@ export function PromptModal({
               <Label htmlFor="template-user">User Template</Label>
               <Textarea id="template-user" rows={7} value={userDraft} disabled={saving} onChange={(event) => setUserDraft(event.target.value)} className="bg-slate-900 border-slate-700 font-mono text-xs" />
               {template.purpose === "ANSWER" && <><Label htmlFor="template-mode-rules">Mode Rules</Label><Textarea id="template-mode-rules" rows={5} value={modeRules} disabled={saving} onChange={(event) => setModeRules(event.target.value)} className="bg-slate-900 border-slate-700 font-mono text-xs" /></>}
-              <div className="flex gap-2"><Button size="sm" disabled={saving} onClick={() => void saveTemplate()}><Save className="mr-1 h-3 w-3" /> Save Version</Button><Button size="sm" variant="ghost" disabled={saving} onClick={() => void saveTemplate(true)}><RotateCcw className="mr-1 h-3 w-3" /> Reset Template</Button></div>
+              <div className="flex gap-2"><Button size="sm" disabled={saving} onClick={() => void saveTemplate()}><Save className="mr-1 h-3 w-3" /> Save Template</Button><Button size="sm" variant="ghost" disabled={saving || !template.customized} onClick={() => void saveTemplate(true)}><RotateCcw className="mr-1 h-3 w-3" /> Reset to Default</Button></div>
             </>}
           </div>}
           
